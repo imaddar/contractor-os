@@ -5,6 +5,7 @@ import { projectsApi } from '../api/projects';
 import type { Project } from '../api/projects';
 import { subcontractorsApi } from '../api/subcontractors';
 import type { Subcontractor } from '../api/subcontractors';
+import Calendar from '../components/Calendar';
 
 const SchedulePage: React.FC = () => {
   const [schedules, setSchedules] = useState<Schedule[]>([]);
@@ -13,6 +14,8 @@ const SchedulePage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [viewMode, setViewMode] = useState<'calendar' | 'list'>('calendar');
+  const [selectedSchedule, setSelectedSchedule] = useState<Schedule | null>(null);
   const [formData, setFormData] = useState({
     project_id: '',
     task_name: '',
@@ -96,22 +99,52 @@ const SchedulePage: React.FC = () => {
     return subcontractor ? subcontractor.name : 'Unassigned';
   };
 
+  const handleEventClick = (schedule: Schedule) => {
+    setSelectedSchedule(schedule);
+  };
+
+  const handleDateClick = (date: Date) => {
+    const dateString = date.toISOString().split('T')[0];
+    setFormData(prev => ({ ...prev, start_date: dateString }));
+    setShowForm(true);
+  };
+
+  const closeModal = () => {
+    setSelectedSchedule(null);
+  };
+
   if (loading) return <div className="page-content">Loading...</div>;
 
   return (
     <div className="page-content">
       <div className="page-header">
         <h1>Schedule</h1>
-        <button 
-          className="btn btn-primary"
-          onClick={() => setShowForm(!showForm)}
-        >
-          {showForm ? 'Cancel' : 'New Task'}
-        </button>
+        <div className="header-controls">
+          <div className="view-toggle">
+            <button 
+              className={`toggle-btn ${viewMode === 'calendar' ? 'active' : ''}`}
+              onClick={() => setViewMode('calendar')}
+            >
+              📅 Calendar
+            </button>
+            <button 
+              className={`toggle-btn ${viewMode === 'list' ? 'active' : ''}`}
+              onClick={() => setViewMode('list')}
+            >
+              📋 List
+            </button>
+          </div>
+          <button 
+            className="btn btn-primary"
+            onClick={() => setShowForm(!showForm)}
+          >
+            {showForm ? 'Cancel' : 'New Task'}
+          </button>
+        </div>
       </div>
 
       {error && (
-        <div className="error-message" style={{ color: 'red', margin: '1rem 0' }}>
+        <div className="error-message">
           {error}
         </div>
       )}
@@ -218,57 +251,115 @@ const SchedulePage: React.FC = () => {
         </div>
       )}
 
-      <div className="schedule-list">
-        {schedules.length === 0 ? (
-          <div className="empty-state">
-            <p>No scheduled tasks found. Add your first task to get started!</p>
-          </div>
-        ) : (
-          <div className="projects-grid">
-            {schedules.map((schedule) => (
-              <div key={schedule.id} className="project-card">
-                <div className="project-header">
-                  <h3>{schedule.task_name}</h3>
-                  <span className={`status ${schedule.status}`}>
-                    {schedule.status}
-                  </span>
-                </div>
-                
-                <div className="project-details">
-                  <div className="detail">
-                    <strong>Project:</strong> {getProjectName(schedule.project_id)}
+      {viewMode === 'calendar' ? (
+        <Calendar 
+          schedules={schedules}
+          projects={projects}
+          onDateClick={handleDateClick}
+          onEventClick={handleEventClick}
+        />
+      ) : (
+        <div className="schedule-list">
+          {schedules.length === 0 ? (
+            <div className="empty-state">
+              <p>No scheduled tasks found. Add your first task to get started!</p>
+            </div>
+          ) : (
+            <div className="projects-grid">
+              {schedules.map((schedule) => (
+                <div key={schedule.id} className="project-card">
+                  <div className="project-header">
+                    <h3>{schedule.task_name}</h3>
+                    <span className={`status ${schedule.status}`}>
+                      {schedule.status}
+                    </span>
                   </div>
-                  {schedule.start_date && (
+                  
+                  <div className="project-details">
                     <div className="detail">
-                      <strong>Start:</strong> {new Date(schedule.start_date).toLocaleDateString()}
+                      <strong>Project:</strong> {getProjectName(schedule.project_id)}
                     </div>
-                  )}
-                  {schedule.end_date && (
-                    <div className="detail">
-                      <strong>End:</strong> {new Date(schedule.end_date).toLocaleDateString()}
-                    </div>
-                  )}
-                  {schedule.assigned_to && (
-                    <div className="detail">
-                      <strong>Assigned to:</strong> {getSubcontractorName(schedule.assigned_to)}
-                    </div>
-                  )}
-                </div>
+                    {schedule.start_date && (
+                      <div className="detail">
+                        <strong>Start:</strong> {new Date(schedule.start_date).toLocaleDateString()}
+                      </div>
+                    )}
+                    {schedule.end_date && (
+                      <div className="detail">
+                        <strong>End:</strong> {new Date(schedule.end_date).toLocaleDateString()}
+                      </div>
+                    )}
+                    {schedule.assigned_to && (
+                      <div className="detail">
+                        <strong>Assigned to:</strong> {getSubcontractorName(schedule.assigned_to)}
+                      </div>
+                    )}
+                  </div>
 
-                <div className="project-actions">
-                  <button className="btn btn-small btn-secondary">Edit</button>
-                  <button 
-                    className="btn btn-small btn-danger"
-                    onClick={() => handleDelete(schedule.id!)}
-                  >
-                    Delete
-                  </button>
+                  <div className="project-actions">
+                    <button className="btn btn-small btn-secondary">Edit</button>
+                    <button 
+                      className="btn btn-small btn-danger"
+                      onClick={() => handleDelete(schedule.id!)}
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {selectedSchedule && (
+        <div className="modal-overlay" onClick={closeModal}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{selectedSchedule.task_name}</h3>
+              <button onClick={closeModal} className="modal-close">×</button>
+            </div>
+            <div className="modal-body">
+              <div className="detail">
+                <strong>Project:</strong> {getProjectName(selectedSchedule.project_id)}
               </div>
-            ))}
+              <div className="detail">
+                <strong>Status:</strong> 
+                <span className={`status ${selectedSchedule.status}`}>
+                  {selectedSchedule.status}
+                </span>
+              </div>
+              {selectedSchedule.start_date && (
+                <div className="detail">
+                  <strong>Start Date:</strong> {selectedSchedule.start_date ? new Date(selectedSchedule.start_date).toLocaleDateString() : ''}
+                </div>
+              )}
+              {selectedSchedule.end_date && (
+                <div className="detail">
+                  <strong>End Date:</strong> {new Date(selectedSchedule.end_date).toLocaleDateString()}
+                </div>
+              )}
+              {selectedSchedule.assigned_to && (
+                <div className="detail">
+                  <strong>Assigned to:</strong> {getSubcontractorName(selectedSchedule.assigned_to)}
+                </div>
+              )}
+            </div>
+            <div className="modal-actions">
+              <button className="btn btn-secondary">Edit</button>
+              <button 
+                className="btn btn-danger"
+                onClick={() => {
+                  handleDelete(selectedSchedule.id!);
+                  closeModal();
+                }}
+              >
+                Delete
+              </button>
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 };

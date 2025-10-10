@@ -1,0 +1,163 @@
+import React, { useState, useEffect } from 'react';
+import type { Schedule } from '../api/schedules';
+import type { Project } from '../api/projects';
+
+interface CalendarProps {
+  schedules: Schedule[];
+  projects: Project[];
+  onDateClick: (date: Date) => void;
+  onEventClick: (schedule: Schedule) => void;
+}
+
+interface CalendarEvent {
+  schedule: Schedule;
+  project: Project;
+  startDate: Date;
+  endDate: Date;
+}
+
+const Calendar: React.FC<CalendarProps> = ({ schedules, projects, onDateClick, onEventClick }) => {
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+
+  useEffect(() => {
+    const events = schedules
+      .filter(schedule => schedule.start_date && schedule.end_date)
+      .map(schedule => {
+        const project = projects.find(p => p.id === schedule.project_id);
+        return {
+          schedule,
+          project: project || { id: 0, name: 'Unknown Project', status: 'active' },
+          startDate: new Date(schedule.start_date!),
+          endDate: new Date(schedule.end_date!)
+        };
+      });
+    setCalendarEvents(events);
+  }, [schedules, projects]);
+
+  const getDaysInMonth = (date: Date) => {
+    return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+  };
+
+  const getFirstDayOfMonth = (date: Date) => {
+    return new Date(date.getFullYear(), date.getMonth(), 1).getDay();
+  };
+
+  const getEventsForDate = (date: Date) => {
+    return calendarEvents.filter(event => {
+      const eventStart = new Date(event.startDate.getFullYear(), event.startDate.getMonth(), event.startDate.getDate());
+      const eventEnd = new Date(event.endDate.getFullYear(), event.endDate.getMonth(), event.endDate.getDate());
+      const targetDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+      
+      return targetDate >= eventStart && targetDate <= eventEnd;
+    });
+  };
+
+  const navigateMonth = (direction: 'prev' | 'next') => {
+    setCurrentDate(prev => {
+      const newDate = new Date(prev);
+      if (direction === 'prev') {
+        newDate.setMonth(prev.getMonth() - 1);
+      } else {
+        newDate.setMonth(prev.getMonth() + 1);
+      }
+      return newDate;
+    });
+  };
+
+  const goToToday = () => {
+    setCurrentDate(new Date());
+  };
+
+  const formatMonth = (date: Date) => {
+    return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  };
+
+  const daysInMonth = getDaysInMonth(currentDate);
+  const firstDay = getFirstDayOfMonth(currentDate);
+  const today = new Date();
+
+  const renderCalendarDays = () => {
+    const days = [];
+    const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+    // Header row
+    daysOfWeek.forEach(day => {
+      days.push(
+        <div key={day} className="calendar-day-header">
+          {day}
+        </div>
+      );
+    });
+
+    // Empty cells for days before the first day of the month
+    for (let i = 0; i < firstDay; i++) {
+      days.push(<div key={`empty-${i}`} className="calendar-day empty"></div>);
+    }
+
+    // Days of the month
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
+      const isToday = date.toDateString() === today.toDateString();
+      const events = getEventsForDate(date);
+
+      days.push(
+        <div
+          key={day}
+          className={`calendar-day ${isToday ? 'today' : ''}`}
+          onClick={() => onDateClick(date)}
+        >
+          <div className="day-number">{day}</div>
+          <div className="day-events">
+            {events.slice(0, 3).map((event, index) => (
+              <div
+                key={`${event.schedule.id}-${index}`}
+                className={`calendar-event status-${event.schedule.status}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEventClick(event.schedule);
+                }}
+                title={`${event.schedule.task_name} - ${event.project.name}`}
+              >
+                <span className="event-text">
+                  {event.schedule.task_name}
+                </span>
+              </div>
+            ))}
+            {events.length > 3 && (
+              <div className="more-events">
+                +{events.length - 3} more
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    return days;
+  };
+
+  return (
+    <div className="calendar-container">
+      <div className="calendar-header">
+        <div className="calendar-nav">
+          <button onClick={() => navigateMonth('prev')} className="nav-button">
+            ‹
+          </button>
+          <h2 className="calendar-title">{formatMonth(currentDate)}</h2>
+          <button onClick={() => navigateMonth('next')} className="nav-button">
+            ›
+          </button>
+        </div>
+        <button onClick={goToToday} className="today-button">
+          Today
+        </button>
+      </div>
+      <div className="calendar-grid">
+        {renderCalendarDays()}
+      </div>
+    </div>
+  );
+};
+
+export default Calendar;
