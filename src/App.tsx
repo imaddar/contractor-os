@@ -5,8 +5,7 @@ import Projects from './pages/Projects'
 import Schedule from './pages/Schedule'
 import Budgets from './pages/Budgets'
 import Subcontractors from './pages/Subcontractors'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
+import ConstructIQ from './pages/ConstructIQ'
 import './App.css'
 
 function ChatInterface({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }) {
@@ -63,7 +62,8 @@ function Navigation({ onChatToggle }: { onChatToggle: () => void }) {
     { path: '/projects', label: 'Projects', icon: '📋' },
     { path: '/schedule', label: 'Schedule', icon: '📅' },
     { path: '/budgets', label: 'Budgets', icon: '💰' },
-    { path: '/subcontractors', label: 'Subcontractors', icon: '👥' }
+    { path: '/subcontractors', label: 'Subcontractors', icon: '👥' },
+    { path: '/constructiq', label: 'ConstructIQ', icon: '🧠' }
   ]
 
   return (
@@ -93,7 +93,6 @@ function Navigation({ onChatToggle }: { onChatToggle: () => void }) {
 }
 
 function App() {
-  const [count, setCount] = useState(0)
   const [isChatOpen, setIsChatOpen] = useState(false)
 
   return (
@@ -108,6 +107,7 @@ function App() {
               <Route path="/schedule" element={<Schedule />} />
               <Route path="/budgets" element={<Budgets />} />
               <Route path="/subcontractors" element={<Subcontractors />} />
+              <Route path="/constructiq" element={<ConstructIQ />} />
             </Routes>
           </main>
           <ChatInterface isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} />
