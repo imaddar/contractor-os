@@ -4,3 +4,12 @@ supabase==2.0.2
 python-dotenv==1.0.0
 pydantic==2.5.0
 python-multipart==0.0.6
+langchain-community
+pypdf
+langchain-text-splitters 
+langgraph 
+langchain-ollama
+langchain_huggingface
+langchain-core
+sentence-transformers
+bs4

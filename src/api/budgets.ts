@@ -53,7 +53,8 @@ export const budgetsApi = {
       method: 'DELETE',
     });
     if (!response.ok) {
-      throw new Error('Failed to delete budget');
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || 'Failed to delete budget');
     }
   },
 };

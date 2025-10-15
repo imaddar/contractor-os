@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 import os
@@ -6,6 +6,9 @@ from dotenv import load_dotenv
 from typing import List, Optional
 from pydantic import BaseModel
 import uvicorn
+from langchain_community.document_loaders import PyPDFLoader
+import tempfile
+import os as file_os
 
 # Load environment variables
 load_dotenv()
@@ -157,7 +160,7 @@ async def delete_project(project_id: int, supabase_client: Client = Depends(get_
     try:
         # Use service role client for deletions if available
         client_to_use = service_supabase if service_supabase else supabase_client
-        print(f"Using {'service role' if service_supabase else 'anon'} client for deletion")
+        print("Using {'service role' if service_supabase else 'anon'} client for deletion")
         
         # First check if project exists
         project_check = client_to_use.table("projects").select("id").eq("id", project_id).execute()
@@ -169,22 +172,22 @@ async def delete_project(project_id: int, supabase_client: Client = Depends(get_
         # Delete related schedules first
         try:
             schedules_result = client_to_use.table("schedules").delete().eq("project_id", project_id).execute()
-            print(f"Schedules deletion result: {schedules_result}")
+            print(f"Schedules deletion result count: {len(schedules_result.data) if schedules_result.data else 0}")
         except Exception as schedule_error:
             print(f"Error deleting schedules: {str(schedule_error)}")
         
         # Delete related budgets
         try:
             budgets_result = client_to_use.table("budgets").delete().eq("project_id", project_id).execute()
-            print(f"Budgets deletion result: {budgets_result}")
+            print(f"Budgets deletion result count: {len(budgets_result.data) if budgets_result.data else 0}")
         except Exception as budget_error:
             print(f"Error deleting budgets: {str(budget_error)}")
         
         # Finally delete the project
         result = client_to_use.table("projects").delete().eq("id", project_id).execute()
-        print(f"Project deletion result: {result}")
+        print(f"Project deletion successful")
         
-        return {"message": "Project and related data deleted successfully"}
+        return {"message": "Project and related data deleted successfully", "deleted_id": project_id}
         
     except HTTPException:
         raise
@@ -232,28 +235,30 @@ async def update_subcontractor(subcontractor_id: int, subcontractor: Subcontract
 @app.delete("/subcontractors/{subcontractor_id}")
 async def delete_subcontractor(subcontractor_id: int, supabase_client: Client = Depends(get_supabase)):
     try:
+        # Use service role client for deletions if available
+        client_to_use = service_supabase if service_supabase else supabase_client
+        
         # First check if subcontractor exists
-        subcontractor_check = supabase_client.table("subcontractors").select("id").eq("id", subcontractor_id).execute()
+        subcontractor_check = client_to_use.table("subcontractors").select("id").eq("id", subcontractor_id).execute()
         if not subcontractor_check.data:
             raise HTTPException(status_code=404, detail="Subcontractor not found")
         
         # Update schedules to remove the subcontractor assignment
         try:
-            update_result = supabase_client.table("schedules").update({"assigned_to": None}).eq("assigned_to", subcontractor_id).execute()
-            print(f"Updated {len(update_result.data) if update_result.data else 0} schedules to remove subcontractor assignment")
+            update_result = client_to_use.table("schedules").update({"assigned_to": None}).eq("assigned_to", subcontractor_id).execute()
+            print(f"Updated schedules to remove subcontractor assignment")
         except Exception as update_error:
             print(f"Error updating schedules: {str(update_error)}")
         
         # Then delete the subcontractor
-        result = supabase_client.table("subcontractors").delete().eq("id", subcontractor_id).execute()
-        print(f"Subcontractor deletion result: {result}")
+        result = client_to_use.table("subcontractors").delete().eq("id", subcontractor_id).execute()
+        print(f"Subcontractor deletion successful")
         
-        return {"message": "Subcontractor deleted successfully"}
+        return {"message": "Subcontractor deleted successfully", "deleted_id": subcontractor_id}
     except HTTPException:
         raise
     except Exception as e:
         print(f"Error deleting subcontractor {subcontractor_id}: {str(e)}")
-        print(f"Error type: {type(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to delete subcontractor: {str(e)}")
 
 # Schedule endpoints
@@ -299,23 +304,66 @@ async def update_schedule(schedule_id: int, schedule: Schedule, supabase_client:
 @app.delete("/schedules/{schedule_id}")
 async def delete_schedule(schedule_id: int, supabase_client: Client = Depends(get_supabase)):
     try:
+        # Use service role client for deletions if available
+        client_to_use = service_supabase if service_supabase else supabase_client
+        
         # First check if schedule exists
-        schedule_check = supabase_client.table("schedules").select("id").eq("id", schedule_id).execute()
+        schedule_check = client_to_use.table("schedules").select("id").eq("id", schedule_id).execute()
         if not schedule_check.data:
             raise HTTPException(status_code=404, detail="Schedule not found")
         
-        result = supabase_client.table("schedules").delete().eq("id", schedule_id).execute()
+        # Delete the schedule
+        result = client_to_use.table("schedules").delete().eq("id", schedule_id).execute()
         print(f"Schedule deletion result: {result}")
         
-        return {"message": "Schedule deleted successfully"}
+        # Supabase delete returns empty data array when successful, so we just check for no error
+        return {"message": "Schedule deleted successfully", "deleted_id": schedule_id}
     except HTTPException:
         raise
     except Exception as e:
         print(f"Error deleting schedule {schedule_id}: {str(e)}")
-        print(f"Error type: {type(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to delete schedule: {str(e)}")
 
-# Budget endpoints
+# Document parsing endpoint
+@app.post("/parse-document")
+async def parse_document(file: UploadFile = File(...)):
+    if not file.filename.endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    
+    try:
+        # Create a temporary file to store the uploaded PDF
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+            content = await file.read()
+            temp_file.write(content)
+            temp_file_path = temp_file.name
+        
+        # Use PyPDFLoader to extract text
+        loader = PyPDFLoader(file_path=temp_file_path)
+        docs = loader.load()
+        
+        # Combine all pages into a single text
+        full_text = "\n\n".join([doc.page_content for doc in docs])
+        
+        # Clean up the temporary file
+        file_os.unlink(temp_file_path)
+        
+        return {
+            "filename": file.filename,
+            "content": full_text,
+            "pages": len(docs),
+            "characters": len(full_text)
+        }
+        
+    except Exception as e:
+        # Make sure to clean up temp file even if there's an error
+        if 'temp_file_path' in locals():
+            try:
+                file_os.unlink(temp_file_path)
+            except:
+                pass
+        raise HTTPException(status_code=500, detail=f"Failed to parse document: {str(e)}")
+
+# Budget endpoints (were missing)
 @app.get("/budgets", response_model=List[Budget])
 async def get_budgets(project_id: Optional[int] = None, supabase_client: Client = Depends(get_supabase)):
     try:
@@ -358,23 +406,26 @@ async def update_budget(budget_id: int, budget: Budget, supabase_client: Client 
 @app.delete("/budgets/{budget_id}")
 async def delete_budget(budget_id: int, supabase_client: Client = Depends(get_supabase)):
     try:
+        # Use service role client for deletions if available
+        client_to_use = service_supabase if service_supabase else supabase_client
+        
         # First check if budget exists
-        budget_check = supabase_client.table("budgets").select("id").eq("id", budget_id).execute()
+        budget_check = client_to_use.table("budgets").select("id").eq("id", budget_id).execute()
         if not budget_check.data:
             raise HTTPException(status_code=404, detail="Budget not found")
         
-        result = supabase_client.table("budgets").delete().eq("id", budget_id).execute()
+        # Delete the budget
+        result = client_to_use.table("budgets").delete().eq("id", budget_id).execute()
         print(f"Budget deletion result: {result}")
         
-        return {"message": "Budget deleted successfully"}
+        return {"message": "Budget deleted successfully", "deleted_id": budget_id}
     except HTTPException:
         raise
     except Exception as e:
         print(f"Error deleting budget {budget_id}: {str(e)}")
-        print(f"Error type: {type(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to delete budget: {str(e)}")
 
-# Add debug endpoint
+# Debug endpoint (consolidated - remove duplicates)
 @app.get("/debug/project/{project_id}")
 async def debug_project_relations(project_id: int, supabase_client: Client = Depends(get_supabase)):
     try:

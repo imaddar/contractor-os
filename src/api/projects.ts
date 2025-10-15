@@ -60,7 +60,8 @@ export const projectsApi = {
       method: 'DELETE',
     });
     if (!response.ok) {
-      throw new Error('Failed to delete project');
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || 'Failed to delete project');
     }
   },
 };
