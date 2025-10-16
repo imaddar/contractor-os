@@ -11,9 +11,22 @@ function ConstructIQ() {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deletingDocument, setDeletingDocument] = useState<Document | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
+  
+  // Chat-related state
+  const [chatMessages, setChatMessages] = useState<Array<{
+    type: 'user' | 'ai';
+    content: string;
+    timestamp: string;
+  }>>([
+    {
+      type: 'ai',
+      content: 'Hello! I\'m ConstructIQ, your AI assistant for construction project management. I can help you analyze documents, plan projects, create schedules, and answer construction-related questions. What would you like to know?',
+      timestamp: new Date().toISOString()
+    }
+  ]);
+  const [chatInput, setChatInput] = useState('');
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const [threadId] = useState(() => `thread_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
 
   useEffect(() => {
     fetchDocuments();
@@ -132,30 +145,73 @@ function ConstructIQ() {
     return new Date(dateString).toLocaleString();
   };
 
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) return;
+  const handleSendMessage = async () => {
+    if (!chatInput.trim() || isChatLoading) return;
+    
+    const userMessage = {
+      type: 'user' as const,
+      content: chatInput.trim(),
+      timestamp: new Date().toISOString()
+    };
+    
+    setChatMessages(prev => [...prev, userMessage]);
+    setChatInput('');
+    setIsChatLoading(true);
+    setError(null);
     
     try {
-      setIsSearching(true);
-      const response = await fetch('http://localhost:8000/documents/search', {
+      const response = await fetch('http://localhost:8000/chat/message', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ query: searchQuery, limit: 5 }),
+        body: JSON.stringify({
+          message: userMessage.content,
+          thread_id: threadId
+        }),
       });
       
       if (!response.ok) {
-        throw new Error('Search failed');
+        throw new Error('Failed to send message');
       }
       
       const data = await response.json();
-      setSearchResults(data.results);
+      
+      // Add AI responses to chat
+      if (data.ai_responses && data.ai_responses.length > 0) {
+        const aiMessages = data.ai_responses.map((resp: any) => ({
+          type: 'ai' as const,
+          content: resp.content,
+          timestamp: resp.timestamp
+        }));
+        setChatMessages(prev => [...prev, ...aiMessages]);
+      }
+      
     } catch (err) {
-      setError('Search failed. Please try again.');
-      console.error('Search error:', err);
+      console.error('Chat error:', err);
+      setError('Failed to send message. Please try again.');
+      setChatMessages(prev => [...prev, {
+        type: 'ai',
+        content: 'Sorry, I encountered an error processing your message. Please try again.',
+        timestamp: new Date().toISOString()
+      }]);
     } finally {
-      setIsSearching(false);
+      setIsChatLoading(false);
+    }
+  };
+
+  const clearChatHistory = async () => {
+    try {
+      await fetch(`http://localhost:8000/chat/history/${threadId}`, {
+        method: 'DELETE',
+      });
+      setChatMessages([{
+        type: 'ai',
+        content: 'Hello! I\'m ConstructIQ, your AI assistant for construction project management. How can I help you today?',
+        timestamp: new Date().toISOString()
+      }]);
+    } catch (err) {
+      console.error('Error clearing chat:', err);
     }
   };
 
@@ -175,14 +231,14 @@ function ConstructIQ() {
     <div className="page-content">
       <div className="page-header">
         <h1>ConstructIQ</h1>
-        <p className="dashboard-subtitle">AI-powered document processing and insights</p>
+        <p className="dashboard-subtitle">AI-powered document processing and construction intelligence</p>
       </div>
 
       <div className="constructiq-container">
         <div className="upload-section">
           <div className="upload-card">
             <h2>📄 Document Parser</h2>
-            <p>Upload PDF documents to extract and analyze their content using AI. Documents are automatically chunked and stored for intelligent search.</p>
+            <p>Upload PDF documents to extract and analyze their content using AI. Documents are automatically chunked and stored for intelligent analysis.</p>
             
             <div className="upload-area">
               <input
@@ -216,47 +272,67 @@ function ConstructIQ() {
           </div>
         </div>
 
-        {/* Add Search Section */}
-        <div className="search-section">
+        {/* AI Chat Section */}
+        <div className="chat-section">
           <div className="upload-card">
-            <h2>🔍 Semantic Search</h2>
-            <p>Search across all your uploaded documents using natural language queries.</p>
-            
-            <div className="search-area">
-              <div className="search-input-group">
-                <input
-                  type="text"
-                  placeholder="Ask questions about your documents..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-                  className="search-input"
-                />
-                <button 
-                  onClick={handleSearch}
-                  disabled={isSearching || !searchQuery.trim()}
-                  className="btn btn-primary"
-                >
-                  {isSearching ? 'Searching...' : 'Search'}
-                </button>
-              </div>
+            <div className="chat-header">
+              <h2>🧠 ConstructIQ AI Assistant</h2>
+              <button 
+                onClick={clearChatHistory}
+                className="btn btn-small btn-secondary"
+                style={{ marginLeft: 'auto' }}
+              >
+                Clear Chat
+              </button>
             </div>
-
-            {searchResults.length > 0 && (
-              <div className="search-results">
-                <h4>Search Results:</h4>
-                {searchResults.map((result, index) => (
-                  <div key={index} className="search-result-card">
-                    <div className="result-header">
-                      <strong>📄 {result.filename}</strong>
+            <p>Ask questions about your documents, get construction advice, or discuss project management topics.</p>
+            
+            <div className="chat-container">
+              <div className="chat-messages">
+                {chatMessages.map((message, index) => (
+                  <div key={index} className={`chat-message ${message.type}`}>
+                    <div className="message-avatar">
+                      {message.type === 'user' ? '👤' : '🧠'}
                     </div>
-                    <div className="result-content">
-                      {result.content.substring(0, 200)}...
+                    <div className="message-content">
+                      <div className="message-text">{message.content}</div>
+                      <div className="message-time">
+                        {new Date(message.timestamp).toLocaleTimeString()}
+                      </div>
                     </div>
                   </div>
                 ))}
+                {isChatLoading && (
+                  <div className="chat-message ai">
+                    <div className="message-avatar">🧠</div>
+                    <div className="message-content">
+                      <div className="message-text typing">ConstructIQ is thinking...</div>
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
+              
+              <div className="chat-input-area">
+                <div className="chat-input-group">
+                  <input
+                    type="text"
+                    placeholder="Ask ConstructIQ about your projects, documents, or construction topics..."
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
+                    className="chat-input"
+                    disabled={isChatLoading}
+                  />
+                  <button 
+                    onClick={handleSendMessage}
+                    disabled={isChatLoading || !chatInput.trim()}
+                    className="btn btn-primary chat-send-btn"
+                  >
+                    {isChatLoading ? '...' : 'Send'}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -311,16 +387,16 @@ function ConstructIQ() {
           <h3>AI-Powered Features</h3>
           <div className="features-grid">
             <div className="feature-card">
-              <h4>🔍 Smart Search</h4>
-              <p>Search through document content using natural language queries with semantic understanding.</p>
+              <h4>🧠 Intelligent Chat</h4>
+              <p>Conversational AI that understands construction context and can analyze your uploaded documents.</p>
             </div>
             <div className="feature-card">
-              <h4>📊 Chunk Analysis</h4>
-              <p>Documents are intelligently chunked for better retrieval and analysis of specific information.</p>
+              <h4>📊 Document Analysis</h4>
+              <p>AI automatically processes and understands construction documents for intelligent question answering.</p>
             </div>
             <div className="feature-card">
-              <h4>🤖 Vector Search</h4>
-              <p>Advanced vector embeddings enable finding relevant content even when exact keywords don't match.</p>
+              <h4>🔧 Construction Expertise</h4>
+              <p>Specialized knowledge in project management, scheduling, budgeting, and construction best practices.</p>
             </div>
           </div>
         </div>

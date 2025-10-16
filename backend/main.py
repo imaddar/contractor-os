@@ -13,6 +13,13 @@ from langchain_huggingface import HuggingFaceEmbeddings
 import tempfile
 import os as file_os
 from datetime import datetime
+from langchain_ollama import ChatOllama
+from langchain_core.tools import tool
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langgraph.graph import MessagesState, StateGraph, END
+from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.checkpoint.memory import MemorySaver
+from typing_extensions import TypedDict
 
 # Load environment variables
 load_dotenv()
@@ -59,6 +66,18 @@ try:
 except Exception as e:
     print(f"Warning: Could not initialize embeddings model: {e}")
     embeddings = None
+
+# Initialize LLM for chat functionality
+try:
+    chat_llm = ChatOllama(model="qwen3:8b", validate_model_on_init=True)
+
+    print("Chat LLM initialized")
+except Exception as e:
+    print(f"Warning: Could not initialize chat LLM: {e}")
+    chat_llm = None
+
+# Initialize memory for conversation persistence
+memory = MemorySaver()
 
 # Dependency to get Supabase client
 def get_supabase() -> Client:
@@ -347,11 +366,129 @@ async def delete_schedule(schedule_id: int, supabase_client: Client = Depends(ge
         print(f"Error deleting schedule {schedule_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to delete schedule: {str(e)}")
 
+# Budget endpoints
+@app.get("/budgets", response_model=List[Budget])
+async def get_budgets(project_id: Optional[int] = None, supabase_client: Client = Depends(get_supabase)):
+    try:
+        query = supabase_client.table("budgets").select("*")
+        if project_id:
+            query = query.eq("project_id", project_id)
+        result = query.execute()
+        return result.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/budgets", response_model=Budget)
+async def create_budget(budget: Budget, supabase_client: Client = Depends(get_supabase)):
+    try:
+        result = supabase_client.table("budgets").insert(budget.dict(exclude={"id"})).execute()
+        return result.data[0]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/budgets/{budget_id}", response_model=Budget)
+async def get_budget(budget_id: int, supabase_client: Client = Depends(get_supabase)):
+    try:
+        result = supabase_client.table("budgets").select("*").eq("id", budget_id).execute()
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Budget not found")
+        return result.data[0]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/budgets/{budget_id}", response_model=Budget)
+async def update_budget(budget_id: int, budget: Budget, supabase_client: Client = Depends(get_supabase)):
+    try:
+        result = supabase_client.table("budgets").update(budget.dict(exclude={"id"})).eq("id", budget_id).execute()
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Budget not found")
+        return result.data[0]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/budgets/{budget_id}")
+async def delete_budget(budget_id: int, supabase_client: Client = Depends(get_supabase)):
+    try:
+        # Use service role client for deletions if available
+        client_to_use = service_supabase if service_supabase else supabase_client
+        
+        # First check if budget exists
+        budget_check = client_to_use.table("budgets").select("id").eq("id", budget_id).execute()
+        if not budget_check.data:
+            raise HTTPException(status_code=404, detail="Budget not found")
+        
+        # Delete the budget
+        result = client_to_use.table("budgets").delete().eq("id", budget_id).execute()
+        print(f"Budget deletion successful")
+        
+        return {"message": "Budget deleted successfully", "deleted_id": budget_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error deleting budget {budget_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete budget: {str(e)}")
+
+# Add dashboard summary endpoint
+@app.get("/dashboard/summary")
+async def get_dashboard_summary(supabase_client: Client = Depends(get_supabase)):
+    try:
+        # Get project statistics
+        projects_result = supabase_client.table("projects").select("*").execute()
+        projects = projects_result.data or []
+        
+        active_projects = len([p for p in projects if p.get('status') == 'active'])
+        total_budget = sum(p.get('budget', 0) or 0 for p in projects)
+        
+        # Get schedule statistics
+        schedules_result = supabase_client.table("schedules").select("*").execute()
+        schedules = schedules_result.data or []
+        
+        pending_tasks = len([s for s in schedules if s.get('status') == 'pending'])
+        in_progress_tasks = len([s for s in schedules if s.get('status') == 'in_progress'])
+        completed_tasks = len([s for s in schedules if s.get('status') == 'completed'])
+        
+        # Get budget statistics
+        budgets_result = supabase_client.table("budgets").select("*").execute()
+        budgets = budgets_result.data or []
+        
+        total_budgeted = sum(b.get('budgeted_amount', 0) or 0 for b in budgets)
+        total_actual = sum(b.get('actual_amount', 0) or 0 for b in budgets)
+        budget_variance = total_budgeted - total_actual
+        
+        # Get subcontractor count
+        subcontractors_result = supabase_client.table("subcontractors").select("id").execute()
+        subcontractor_count = len(subcontractors_result.data or [])
+        
+        return {
+            "projects": {
+                "total": len(projects),
+                "active": active_projects,
+                "total_budget": total_budget
+            },
+            "tasks": {
+                "total": len(schedules),
+                "pending": pending_tasks,
+                "in_progress": in_progress_tasks,
+                "completed": completed_tasks
+            },
+            "budgets": {
+                "total_budgeted": total_budgeted,
+                "total_actual": total_actual,
+                "variance": budget_variance
+            },
+            "subcontractors": {
+                "total": subcontractor_count
+            }
+        }
+    except Exception as e:
+        print(f"Error fetching dashboard summary: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Document endpoints
 @app.get("/documents", response_model=List[Document])
 async def get_documents(supabase_client: Client = Depends(get_supabase)):
     try:
-        # Get unique documents from the vector store by grouping by filename
+        # Get unique documents from the vector store by grouping on filename
         result = supabase_client.table("documents").select("metadata").execute()
         
         # Group by filename to get unique documents
@@ -564,41 +701,224 @@ async def parse_document(file: UploadFile = File(...), supabase_client: Client =
             except Exception as cleanup_error:
                 print(f"Failed to cleanup temp file: {cleanup_error}")
 
-# Add endpoint for semantic search
-@app.post("/documents/search")
-async def search_documents(request_body: dict, supabase_client: Client = Depends(get_supabase)):
+# Add document retrieval tool for LangGraph
+@tool(response_format="content_and_artifact")
+def retrieve_documents(query: str):
+    """Retrieve construction document information related to a query."""
     if not embeddings:
-        raise HTTPException(status_code=500, detail="Embeddings model not available")
+        return "Document search is not available", []
     
     try:
-        query = request_body.get("query", "")
-        limit = request_body.get("limit", 5)
-        
-        if not query.strip():
-            raise HTTPException(status_code=400, detail="Query cannot be empty")
-        
         vector_store = SupabaseVectorStore(
-            client=service_supabase if service_supabase else supabase_client,
+            client=service_supabase if service_supabase else supabase,
             embedding=embeddings,
             table_name="documents",
             query_name="match_documents"
         )
         
-        matched_docs = vector_store.similarity_search(query, k=limit)
+        retrieved_docs = vector_store.similarity_search(query, k=3)
+        serialized = "\n\n".join(
+            (f"Document: {doc.metadata.get('filename', 'Unknown')}\n"
+             f"Content: {doc.page_content[:500]}...")
+            for doc in retrieved_docs
+        )
+        return serialized, retrieved_docs
+    except Exception as e:
+        return f"Error retrieving documents: {str(e)}", []
+
+# LangGraph workflow functions
+def query_or_respond(state: MessagesState):
+    """Generate tool call for retrieval or respond directly."""
+    if not chat_llm:
+        return {"messages": [AIMessage(content="Chat functionality is not available.")]}
+    
+    llm_with_tools = chat_llm.bind_tools([retrieve_documents])
+    response = llm_with_tools.invoke(state["messages"])
+    return {"messages": [response]}
+
+def generate_response(state: MessagesState):
+    """Generate response using retrieved document content."""
+    if not chat_llm:
+        return {"messages": [AIMessage(content="Chat functionality is not available.")]}
+    
+    # Get recent tool messages
+    recent_tool_messages = []
+    for message in reversed(state["messages"]):
+        if message.type == "tool":
+            recent_tool_messages.append(message)
+        else:
+            break
+    tool_messages = recent_tool_messages[::-1]
+
+    # Format context from retrieved documents
+    docs_content = "\n\n".join(doc.content for doc in tool_messages)
+    
+    system_message_content = (
+        "You are ConstructIQ, an AI assistant specialized in construction project management. "
+        "You help contractors with project planning, scheduling, budgeting, and document analysis. "
+        "Use the following retrieved document content to answer questions accurately. "
+        "If the documents don't contain relevant information, provide general construction advice. "
+        "Keep responses practical and actionable for construction professionals. "
+        "IMPORTANT: Do not include any <think> tags or thinking processes in your response. "
+        "Provide only the direct, clean answer without showing your reasoning process."
+        "\n\nRetrieved Documents:\n"
+        f"{docs_content}"
+    )
+    
+    # Get conversation history (excluding tool calls)
+    conversation_messages = [
+        message for message in state["messages"]
+        if message.type in ("human", "system") 
+        or (message.type == "ai" and not message.tool_calls)
+    ]
+    
+    prompt = [SystemMessage(content=system_message_content)] + conversation_messages
+    response = chat_llm.invoke(prompt)
+    
+    # Clean the response content to remove <think> tags
+    cleaned_content = clean_ai_response(response.content)
+    response.content = cleaned_content
+    
+    return {"messages": [response]}
+
+def clean_ai_response(content: str) -> str:
+    """Remove <think> sections from AI responses."""
+    import re
+    
+    # Remove <think>...</think> blocks (case insensitive, multiline)
+    cleaned = re.sub(r'<think>.*?</think>\s*', '', content, flags=re.DOTALL | re.IGNORECASE)
+    
+    # Also handle think blocks without closing tags (just in case)
+    cleaned = re.sub(r'<think>.*?(?=\n\n|\Z)', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
+    
+    # Clean up any extra whitespace at the beginning
+    cleaned = cleaned.strip()
+    
+    return cleaned
+
+# Build the chat graph
+def create_chat_graph():
+    """Create and compile the LangGraph chat workflow."""
+    if not chat_llm:
+        return None
+    
+    graph_builder = StateGraph(MessagesState)
+    
+    # Add nodes
+    graph_builder.add_node("query_or_respond", query_or_respond)
+    graph_builder.add_node("tools", ToolNode([retrieve_documents]))
+    graph_builder.add_node("generate", generate_response)
+    
+    # Set entry point and edges
+    graph_builder.set_entry_point("query_or_respond")
+    graph_builder.add_conditional_edges(
+        "query_or_respond",
+        tools_condition,
+        {END: END, "tools": "tools"},
+    )
+    graph_builder.add_edge("tools", "generate")
+    graph_builder.add_edge("generate", END)
+    
+    return graph_builder.compile(checkpointer=memory)
+
+# Initialize chat graph
+chat_graph = create_chat_graph()
+
+# Chat endpoints
+@app.post("/chat/message")
+async def send_chat_message(request_body: dict):
+    """Send a message to the AI chat system."""
+    if not chat_graph:
+        raise HTTPException(status_code=500, detail="Chat functionality is not available")
+    
+    try:
+        message = request_body.get("message", "")
+        thread_id = request_body.get("thread_id", "default")
         
-        results = []
-        for doc in matched_docs:
-            results.append({
-                "content": doc.page_content,
-                "metadata": doc.metadata,
-                "filename": doc.metadata.get("filename", "Unknown")
-            })
+        if not message.strip():
+            raise HTTPException(status_code=400, detail="Message cannot be empty")
         
-        return {"query": query, "results": results}
+        config = {"configurable": {"thread_id": thread_id}}
+        
+        # Process message through the graph
+        response_messages = []
+        for step in chat_graph.stream(
+            {"messages": [HumanMessage(content=message)]},
+            config=config,
+            stream_mode="values",
+        ):
+            if step["messages"]:
+                last_message = step["messages"][-1]
+                if last_message.type == "ai" and not last_message.tool_calls:
+                    # Ensure the response is cleaned before sending
+                    cleaned_content = clean_ai_response(last_message.content)
+                    response_messages.append({
+                        "type": "ai",
+                        "content": cleaned_content,
+                        "timestamp": datetime.now().isoformat()
+                    })
+        
+        return {
+            "thread_id": thread_id,
+            "user_message": message,
+            "ai_responses": response_messages,
+            "timestamp": datetime.now().isoformat()
+        }
         
     except Exception as e:
-        print(f"Search error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+        print(f"Chat error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+
+@app.get("/chat/history/{thread_id}")
+async def get_chat_history(thread_id: str):
+    """Get chat history for a specific thread."""
+    if not chat_graph:
+        raise HTTPException(status_code=500, detail="Chat functionality is not available")
+    
+    try:
+        config = {"configurable": {"thread_id": thread_id}}
+        
+        # Get the current state (conversation history)
+        state = chat_graph.get_state(config)
+        
+        messages = []
+        for msg in state.values.get("messages", []):
+            if msg.type in ["human", "ai"] and not getattr(msg, 'tool_calls', None):
+                messages.append({
+                    "type": msg.type,
+                    "content": msg.content,
+                    "timestamp": datetime.now().isoformat()  # In real app, store actual timestamps
+                })
+        
+        return {
+            "thread_id": thread_id,
+            "messages": messages
+        }
+        
+    except Exception as e:
+        print(f"Chat history error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get chat history: {str(e)}")
+
+@app.delete("/chat/history/{thread_id}")
+async def clear_chat_history(thread_id: str):
+    """Clear chat history for a specific thread."""
+    if not chat_graph:
+        raise HTTPException(status_code=500, detail="Chat functionality is not available")
+    
+    try:
+        config = {"configurable": {"thread_id": thread_id}}
+        
+        # Clear the conversation by creating a new empty state
+        chat_graph.update_state(config, {"messages": []})
+        
+        return {
+            "message": f"Chat history cleared for thread {thread_id}",
+            "thread_id": thread_id
+        }
+        
+    except Exception as e:
+        print(f"Clear chat history error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear chat history: {str(e)}")
 
 # Remove the duplicate debug endpoint that appears twice
 # Keep only one version at the end of the file
