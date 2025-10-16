@@ -7,6 +7,9 @@ from typing import List, Optional
 from pydantic import BaseModel
 import uvicorn
 from langchain_community.document_loaders import PyPDFLoader
+from langchain_text_splitters import CharacterTextSplitter
+from langchain_community.vectorstores import SupabaseVectorStore
+from langchain_huggingface import HuggingFaceEmbeddings
 import tempfile
 import os as file_os
 from datetime import datetime
@@ -49,6 +52,14 @@ if SUPABASE_SERVICE_KEY:
 else:
     print("No service role key found")
 
+# Initialize embeddings for RAG
+try:
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
+    print("Embeddings model initialized")
+except Exception as e:
+    print(f"Warning: Could not initialize embeddings model: {e}")
+    embeddings = None
+
 # Dependency to get Supabase client
 def get_supabase() -> Client:
     return supabase
@@ -87,11 +98,12 @@ class Budget(BaseModel):
     actual_amount: float = 0.0
 
 class Document(BaseModel):
-    id: Optional[int] = None
+    id: Optional[str] = None  # Vector store uses string IDs
     filename: str
     content: str
     file_size: Optional[int] = None
     page_count: Optional[int] = None
+    chunk_count: Optional[int] = None
     uploaded_at: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -339,151 +351,254 @@ async def delete_schedule(schedule_id: int, supabase_client: Client = Depends(ge
 @app.get("/documents", response_model=List[Document])
 async def get_documents(supabase_client: Client = Depends(get_supabase)):
     try:
-        result = supabase_client.table("documents").select("*").order("uploaded_at", desc=True).execute()
-        return result.data
+        # Get unique documents from the vector store by grouping by filename
+        result = supabase_client.table("documents").select("metadata").execute()
+        
+        # Group by filename to get unique documents
+        documents_dict = {}
+        for row in result.data:
+            metadata = row.get('metadata', {})
+            filename = metadata.get('filename')
+            
+            # Skip documents with invalid or missing filenames
+            if not filename or filename == 'Unknown' or filename.strip() == '':
+                continue
+                
+            if filename not in documents_dict:
+                documents_dict[filename] = {
+                    'id': f"{filename}_{metadata.get('upload_timestamp', 'unknown')}",
+                    'filename': filename,
+                    'content': f"Document stored as chunks for semantic search",
+                    'file_size': metadata.get('file_size'),
+                    'page_count': metadata.get('page_count'),
+                    'chunk_count': 1,
+                    'uploaded_at': metadata.get('upload_timestamp'),
+                    'created_at': metadata.get('upload_timestamp'),
+                    'updated_at': metadata.get('upload_timestamp')
+                }
+            else:
+                # Increment chunk count for duplicate filenames
+                documents_dict[filename]['chunk_count'] += 1
+        
+        return list(documents_dict.values())
     except Exception as e:
+        print(f"Error fetching documents: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/documents/{document_id}", response_model=Document)
-async def get_document(document_id: int, supabase_client: Client = Depends(get_supabase)):
+@app.get("/documents/{filename}")
+async def get_document_by_filename(filename: str, supabase_client: Client = Depends(get_supabase)):
     try:
-        result = supabase_client.table("documents").select("*").eq("id", document_id).execute()
+        # Validate filename
+        if not filename or filename == 'Unknown' or filename.strip() == '':
+            raise HTTPException(status_code=400, detail="Invalid filename provided")
+            
+        print(f"Fetching document with filename: {filename}")
+        
+        # Get all chunks for this filename
+        result = supabase_client.table("documents").select("*").eq("metadata->>filename", filename).execute()
+        
         if not result.data:
-            raise HTTPException(status_code=404, detail="Document not found")
-        return result.data[0]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.delete("/documents/{document_id}")
-async def delete_document(document_id: int, supabase_client: Client = Depends(get_supabase)):
-    try:
-        # Use service role client for deletions if available
-        client_to_use = service_supabase if service_supabase else supabase_client
+            raise HTTPException(status_code=404, detail=f"Document with filename '{filename}' not found")
         
-        # First check if document exists
-        document_check = client_to_use.table("documents").select("id").eq("id", document_id).execute()
-        if not document_check.data:
-            raise HTTPException(status_code=404, detail="Document not found")
+        # Get metadata from first chunk
+        first_chunk = result.data[0]
+        metadata = first_chunk.get('metadata', {})
         
-        # Delete the document
-        result = client_to_use.table("documents").delete().eq("id", document_id).execute()
-        print(f"Document deletion successful")
+        # Get full document text from metadata
+        full_document_text = metadata.get('full_document_text', '')
         
-        return {"message": "Document deleted successfully", "deleted_id": document_id}
+        # If no full text in metadata, combine chunks as fallback
+        if not full_document_text:
+            full_document_text = "\n\n".join([chunk.get('content', '') for chunk in result.data])
+        
+        return {
+            'id': f"{filename}_{metadata.get('upload_timestamp', 'unknown')}",
+            'filename': filename,
+            'content': full_document_text,
+            'file_size': metadata.get('file_size'),
+            'page_count': metadata.get('page_count'),
+            'chunk_count': len(result.data),
+            'uploaded_at': metadata.get('upload_timestamp'),
+            'created_at': metadata.get('upload_timestamp'),
+            'updated_at': metadata.get('upload_timestamp')
+        }
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error deleting document {document_id}: {str(e)}")
+        print(f"Error fetching document {filename}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch document: {str(e)}")
+
+@app.delete("/documents/{filename}")
+async def delete_document_by_filename(filename: str, supabase_client: Client = Depends(get_supabase)):
+    try:
+        # Validate filename
+        if not filename or filename == 'Unknown' or filename.strip() == '':
+            raise HTTPException(status_code=400, detail="Invalid filename provided")
+            
+        # Use service role client for deletions if available
+        client_to_use = service_supabase if service_supabase else supabase_client
+        
+        print(f"Attempting to delete document: {filename}")
+        
+        # Check if document exists
+        document_check = client_to_use.table("documents").select("id").eq("metadata->>filename", filename).execute()
+        if not document_check.data:
+            raise HTTPException(status_code=404, detail=f"Document with filename '{filename}' not found")
+        
+        # Delete all chunks for this filename
+        result = client_to_use.table("documents").delete().eq("metadata->>filename", filename).execute()
+        deleted_count = len(result.data) if result.data else 0
+        
+        print(f"Deleted {deleted_count} chunks for document: {filename}")
+        
+        return {"message": f"Document '{filename}' and all {deleted_count} chunks deleted successfully", "deleted_filename": filename}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error deleting document {filename}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to delete document: {str(e)}")
 
-# Document parsing endpoint (updated to save to database)
-@app.post("/parse-document", response_model=Document)
+# Document parsing endpoint (updated for RAG-style chunking)
+@app.post("/parse-document")
 async def parse_document(file: UploadFile = File(...), supabase_client: Client = Depends(get_supabase)):
-    if not file.filename.endswith('.pdf'):
+    print(f"Starting document parsing for file: {file.filename}")
+    
+    if not file.filename or not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
     
+    if not embeddings:
+        print("Error: Embeddings model not available")
+        raise HTTPException(status_code=500, detail="Embeddings model not available")
+    
+    temp_file_path = None
     try:
+        print("Creating temporary file...")
         # Create a temporary file to store the uploaded PDF
         with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
             content = await file.read()
             temp_file.write(content)
             temp_file_path = temp_file.name
         
-        # Use PyPDFLoader to extract text
-        loader = PyPDFLoader(file_path=temp_file_path)
-        docs = loader.load()
+        print(f"Temporary file created: {temp_file_path}")
+        print(f"File size: {len(content)} bytes")
         
-        # Combine all pages into a single text
-        full_text = "\n\n".join([doc.page_content for doc in docs])
+        # Use PyPDFLoader to extract text
+        print("Loading PDF with PyPDFLoader...")
+        loader = PyPDFLoader(file_path=temp_file_path)
+        documents = loader.load()
+        print(f"PDF loaded successfully. Pages: {len(documents)}")
+        
+        if not documents:
+            raise HTTPException(status_code=400, detail="No content could be extracted from the PDF")
+        
+        # Combine all pages into full document text for viewing
+        full_document_text = "\n\n".join([doc.page_content for doc in documents])
+        
+        # Split documents into chunks
+        print("Splitting documents into chunks...")
+        text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+        docs = text_splitter.split_documents(documents)
+        print(f"Document split into {len(docs)} chunks")
+        
+        if not docs:
+            raise HTTPException(status_code=400, detail="Document could not be split into chunks")
+        
+        # Add comprehensive metadata to each chunk
+        print("Adding metadata to chunks...")
+        upload_timestamp = datetime.now().isoformat()
+        for i, doc in enumerate(docs):
+            doc.metadata.update({
+                "filename": file.filename,
+                "upload_timestamp": upload_timestamp,
+                "file_size": len(content),
+                "page_count": len(documents),
+                "chunk_index": i,
+                "total_chunks": len(docs),
+                "full_document_text": full_document_text  # Store full text in metadata
+            })
         
         # Clean up the temporary file
+        print("Cleaning up temporary file...")
         file_os.unlink(temp_file_path)
+        temp_file_path = None
         
-        # Save to database
-        document_data = {
+        # Store chunks in vector database
+        print("Storing chunks in vector database...")
+        vector_store = SupabaseVectorStore.from_documents(
+            docs,
+            embeddings,
+            client=service_supabase if service_supabase else supabase_client,
+            table_name="documents",
+            query_name="match_documents",
+            chunk_size=500,
+        )
+        print("Chunks stored successfully in vector database")
+        
+        # Return document info
+        return {
+            "id": f"{file.filename}_{upload_timestamp}",
             "filename": file.filename,
-            "content": full_text,
+            "content": f"Document processed into {len(docs)} searchable chunks",
             "file_size": len(content),
-            "page_count": len(docs)
+            "page_count": len(documents),
+            "chunk_count": len(docs),
+            "uploaded_at": upload_timestamp,
+            "created_at": upload_timestamp,
+            "updated_at": upload_timestamp
         }
         
-        result = supabase_client.table("documents").insert(document_data).execute()
-        
-        if not result.data:
-            raise HTTPException(status_code=500, detail="Failed to save document to database")
-        
-        return result.data[0]
-        
-    except Exception as e:
-        # Make sure to clean up temp file even if there's an error
-        if 'temp_file_path' in locals():
-            try:
-                file_os.unlink(temp_file_path)
-            except:
-                pass
-        raise HTTPException(status_code=500, detail=f"Failed to parse document: {str(e)}")
-
-# Budget endpoints (were missing)
-@app.get("/budgets", response_model=List[Budget])
-async def get_budgets(project_id: Optional[int] = None, supabase_client: Client = Depends(get_supabase)):
-    try:
-        query = supabase_client.table("budgets").select("*")
-        if project_id:
-            query = query.eq("project_id", project_id)
-        result = query.execute()
-        return result.data
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/budgets", response_model=Budget)
-async def create_budget(budget: Budget, supabase_client: Client = Depends(get_supabase)):
-    try:
-        result = supabase_client.table("budgets").insert(budget.dict(exclude={"id"})).execute()
-        return result.data[0]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/budgets/{budget_id}", response_model=Budget)
-async def get_budget(budget_id: int, supabase_client: Client = Depends(get_supabase)):
-    try:
-        result = supabase_client.table("budgets").select("*").eq("id", budget_id).execute()
-        if not result.data:
-            raise HTTPException(status_code=404, detail="Budget not found")
-        return result.data[0]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.put("/budgets/{budget_id}", response_model=Budget)
-async def update_budget(budget_id: int, budget: Budget, supabase_client: Client = Depends(get_supabase)):
-    try:
-        result = supabase_client.table("budgets").update(budget.dict(exclude={"id"})).eq("id", budget_id).execute()
-        if not result.data:
-            raise HTTPException(status_code=404, detail="Budget not found")
-        return result.data[0]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.delete("/budgets/{budget_id}")
-async def delete_budget(budget_id: int, supabase_client: Client = Depends(get_supabase)):
-    try:
-        # Use service role client for deletions if available
-        client_to_use = service_supabase if service_supabase else supabase_client
-        
-        # First check if budget exists
-        budget_check = client_to_use.table("budgets").select("id").eq("id", budget_id).execute()
-        if not budget_check.data:
-            raise HTTPException(status_code=404, detail="Budget not found")
-        
-        # Delete the budget
-        result = client_to_use.table("budgets").delete().eq("id", budget_id).execute()
-        print(f"Budget deletion successful")
-        
-        return {"message": "Budget deleted successfully", "deleted_id": budget_id}
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error deleting budget {budget_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to delete budget: {str(e)}")
+        print(f"Unexpected error during document processing: {str(e)}")
+        print(f"Error type: {type(e)}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Failed to parse document: {str(e)}")
+    finally:
+        # Make sure to clean up temp file even if there's an error
+        if temp_file_path and file_os.path.exists(temp_file_path):
+            try:
+                file_os.unlink(temp_file_path)
+                print("Temporary file cleaned up")
+            except Exception as cleanup_error:
+                print(f"Failed to cleanup temp file: {cleanup_error}")
+
+# Add endpoint for semantic search
+@app.post("/documents/search")
+async def search_documents(request_body: dict, supabase_client: Client = Depends(get_supabase)):
+    if not embeddings:
+        raise HTTPException(status_code=500, detail="Embeddings model not available")
+    
+    try:
+        query = request_body.get("query", "")
+        limit = request_body.get("limit", 5)
+        
+        if not query.strip():
+            raise HTTPException(status_code=400, detail="Query cannot be empty")
+        
+        vector_store = SupabaseVectorStore(
+            client=service_supabase if service_supabase else supabase_client,
+            embedding=embeddings,
+            table_name="documents",
+            query_name="match_documents"
+        )
+        
+        matched_docs = vector_store.similarity_search(query, k=limit)
+        
+        results = []
+        for doc in matched_docs:
+            results.append({
+                "content": doc.page_content,
+                "metadata": doc.metadata,
+                "filename": doc.metadata.get("filename", "Unknown")
+            })
+        
+        return {"query": query, "results": results}
+        
+    except Exception as e:
+        print(f"Search error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 # Remove the duplicate debug endpoint that appears twice
 # Keep only one version at the end of the file

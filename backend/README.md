@@ -63,11 +63,14 @@ The API will be available at `http://localhost:8000`
 - `PUT /budgets/{id}` - Update budget
 - `DELETE /budgets/{id}` - Delete budget
 
-### Documents
-- `GET /documents` - List all documents
-- `POST /parse-document` - Upload and parse PDF document
-- `GET /documents/{id}` - Get specific document
-- `DELETE /documents/{id}` - Delete document
+### Documents (Vector RAG System)
+- `GET /documents` - List all unique documents (grouped by filename)
+- `POST /parse-document` - Upload and parse PDF document into searchable chunks
+- `GET /documents/{filename}` - Get full document text by filename
+- `DELETE /documents/{filename}` - Delete document and all chunks by filename
+- `POST /documents/search` - Semantic search across all document chunks
+
+**Note**: Documents are stored as chunked vectors for AI search. Each document is split into chunks but the full text is preserved and accessible.
 
 ### General
 - `GET /` - Root endpoint
