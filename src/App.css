@@ -1537,15 +1537,15 @@ body {
 
 .document-metadata {
   background: var(--steel-900);
-  padding: var(--space-lg);
+  padding: var(--space-md);
   border-radius: var(--radius-md);
-  margin-bottom: var(--space-lg);
+  margin-bottom: var(--space-md);
   border: 1px solid var(--steel-600);
 }
 
 .document-metadata p {
-  margin: var(--space-sm) 0;
-  font-size: 0.9rem;
+  margin: var(--space-xs) 0;
+  font-size: 0.85rem;
   color: var(--steel-300);
   display: flex;
   justify-content: space-between;

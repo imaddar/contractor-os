@@ -63,6 +63,12 @@ The API will be available at `http://localhost:8000`
 - `PUT /budgets/{id}` - Update budget
 - `DELETE /budgets/{id}` - Delete budget
 
+### Documents
+- `GET /documents` - List all documents
+- `POST /parse-document` - Upload and parse PDF document
+- `GET /documents/{id}` - Get specific document
+- `DELETE /documents/{id}` - Delete document
+
 ### General
 - `GET /` - Root endpoint
 - `GET /health` - Health check

@@ -9,6 +9,7 @@ import uvicorn
 from langchain_community.document_loaders import PyPDFLoader
 import tempfile
 import os as file_os
+from datetime import datetime
 
 # Load environment variables
 load_dotenv()
@@ -84,6 +85,16 @@ class Budget(BaseModel):
     category: str
     budgeted_amount: float
     actual_amount: float = 0.0
+
+class Document(BaseModel):
+    id: Optional[int] = None
+    filename: str
+    content: str
+    file_size: Optional[int] = None
+    page_count: Optional[int] = None
+    uploaded_at: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
 # Basic routes
 @app.get("/")
@@ -324,9 +335,50 @@ async def delete_schedule(schedule_id: int, supabase_client: Client = Depends(ge
         print(f"Error deleting schedule {schedule_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to delete schedule: {str(e)}")
 
-# Document parsing endpoint
-@app.post("/parse-document")
-async def parse_document(file: UploadFile = File(...)):
+# Document endpoints
+@app.get("/documents", response_model=List[Document])
+async def get_documents(supabase_client: Client = Depends(get_supabase)):
+    try:
+        result = supabase_client.table("documents").select("*").order("uploaded_at", desc=True).execute()
+        return result.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/documents/{document_id}", response_model=Document)
+async def get_document(document_id: int, supabase_client: Client = Depends(get_supabase)):
+    try:
+        result = supabase_client.table("documents").select("*").eq("id", document_id).execute()
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Document not found")
+        return result.data[0]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/documents/{document_id}")
+async def delete_document(document_id: int, supabase_client: Client = Depends(get_supabase)):
+    try:
+        # Use service role client for deletions if available
+        client_to_use = service_supabase if service_supabase else supabase_client
+        
+        # First check if document exists
+        document_check = client_to_use.table("documents").select("id").eq("id", document_id).execute()
+        if not document_check.data:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        # Delete the document
+        result = client_to_use.table("documents").delete().eq("id", document_id).execute()
+        print(f"Document deletion successful")
+        
+        return {"message": "Document deleted successfully", "deleted_id": document_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error deleting document {document_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete document: {str(e)}")
+
+# Document parsing endpoint (updated to save to database)
+@app.post("/parse-document", response_model=Document)
+async def parse_document(file: UploadFile = File(...), supabase_client: Client = Depends(get_supabase)):
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
     
@@ -347,12 +399,20 @@ async def parse_document(file: UploadFile = File(...)):
         # Clean up the temporary file
         file_os.unlink(temp_file_path)
         
-        return {
+        # Save to database
+        document_data = {
             "filename": file.filename,
             "content": full_text,
-            "pages": len(docs),
-            "characters": len(full_text)
+            "file_size": len(content),
+            "page_count": len(docs)
         }
+        
+        result = supabase_client.table("documents").insert(document_data).execute()
+        
+        if not result.data:
+            raise HTTPException(status_code=500, detail="Failed to save document to database")
+        
+        return result.data[0]
         
     except Exception as e:
         # Make sure to clean up temp file even if there's an error
@@ -416,7 +476,7 @@ async def delete_budget(budget_id: int, supabase_client: Client = Depends(get_su
         
         # Delete the budget
         result = client_to_use.table("budgets").delete().eq("id", budget_id).execute()
-        print(f"Budget deletion result: {result}")
+        print(f"Budget deletion successful")
         
         return {"message": "Budget deleted successfully", "deleted_id": budget_id}
     except HTTPException:
@@ -425,29 +485,8 @@ async def delete_budget(budget_id: int, supabase_client: Client = Depends(get_su
         print(f"Error deleting budget {budget_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to delete budget: {str(e)}")
 
-# Debug endpoint (consolidated - remove duplicates)
-@app.get("/debug/project/{project_id}")
-async def debug_project_relations(project_id: int, supabase_client: Client = Depends(get_supabase)):
-    try:
-        # Check project exists
-        project = supabase_client.table("projects").select("*").eq("id", project_id).execute()
-        
-        # Check related schedules
-        schedules = supabase_client.table("schedules").select("*").eq("project_id", project_id).execute()
-        
-        # Check related budgets
-        budgets = supabase_client.table("budgets").select("*").eq("project_id", project_id).execute()
-        
-        return {
-            "project_exists": len(project.data) > 0,
-            "project_data": project.data,
-            "schedules_count": len(schedules.data) if schedules.data else 0,
-            "schedules_data": schedules.data,
-            "budgets_count": len(budgets.data) if budgets.data else 0,
-            "budgets_data": budgets.data
-        }
-    except Exception as e:
-        return {"error": str(e), "error_type": str(type(e))}
+# Remove the duplicate debug endpoint that appears twice
+# Keep only one version at the end of the file
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

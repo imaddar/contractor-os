@@ -1,16 +1,33 @@
-import React, { useState } from 'react';
-
-interface ParsedDocument {
-  filename: string;
-  content: string;
-  uploadedAt: string;
-}
+import React, { useState, useEffect } from 'react';
+import { documentsApi, type Document } from '../api/documents';
+import DeleteModal from '../components/DeleteModal';
 
 function ConstructIQ() {
-  const [uploadedFiles, setUploadedFiles] = useState<ParsedDocument[]>([]);
+  const [uploadedFiles, setUploadedFiles] = useState<Document[]>([]);
   const [isUploading, setIsUploading] = useState(false);
-  const [selectedDocument, setSelectedDocument] = useState<ParsedDocument | null>(null);
+  const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deletingDocument, setDeletingDocument] = useState<Document | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  useEffect(() => {
+    fetchDocuments();
+  }, []);
+
+  const fetchDocuments = async () => {
+    try {
+      setIsLoading(true);
+      const documents = await documentsApi.getAll();
+      setUploadedFiles(documents);
+    } catch (err) {
+      setError('Failed to load documents');
+      console.error('Error fetching documents:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -24,26 +41,8 @@ function ConstructIQ() {
     setIsUploading(true);
     setError(null);
 
-    const formData = new FormData();
-    formData.append('file', file);
-
     try {
-      const response = await fetch('http://localhost:8000/parse-document', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to parse document');
-      }
-
-      const result = await response.json();
-      const newDoc: ParsedDocument = {
-        filename: file.name,
-        content: result.content,
-        uploadedAt: new Date().toISOString(),
-      };
-
+      const newDoc = await documentsApi.uploadAndParse(file);
       setUploadedFiles(prev => [newDoc, ...prev]);
     } catch (err) {
       setError('Failed to parse document. Please try again.');
@@ -55,13 +54,74 @@ function ConstructIQ() {
     }
   };
 
-  const openDocument = (doc: ParsedDocument) => {
+  const handleDeleteDocument = (doc: Document) => {
+    setDeletingDocument(doc);
+    setShowDeleteModal(true);
+    setError(null); // Clear any previous errors
+  };
+
+  const confirmDelete = async () => {
+    if (!deletingDocument?.id) return;
+    
+    try {
+      setIsDeleting(true);
+      console.log('Deleting document:', deletingDocument.id);
+      await documentsApi.delete(deletingDocument.id);
+      console.log('Document deleted successfully');
+      setUploadedFiles(prev => prev.filter(d => d.id !== deletingDocument.id));
+      if (selectedDocument?.id === deletingDocument.id) {
+        setSelectedDocument(null);
+      }
+      setShowDeleteModal(false);
+      setDeletingDocument(null);
+      setError(null);
+    } catch (err: any) {
+      console.error('Delete error:', err);
+      setError(err.message || 'Failed to delete document');
+      // Keep modal open to show error
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const cancelDelete = () => {
+    setShowDeleteModal(false);
+    setDeletingDocument(null);
+    setError(null);
+  };
+
+  const openDocument = (doc: Document) => {
     setSelectedDocument(doc);
   };
 
   const closeDocument = () => {
     setSelectedDocument(null);
   };
+
+  const formatFileSize = (bytes?: number) => {
+    if (!bytes) return 'Unknown size';
+    const kb = bytes / 1024;
+    if (kb < 1024) return `${kb.toFixed(1)} KB`;
+    const mb = kb / 1024;
+    return `${mb.toFixed(1)} MB`;
+  };
+
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return 'Unknown date';
+    return new Date(dateString).toLocaleString();
+  };
+
+  if (isLoading) {
+    return (
+      <div className="page-content">
+        <div className="page-header">
+          <h1>ConstructIQ</h1>
+          <p className="dashboard-subtitle">AI-powered document processing and insights</p>
+        </div>
+        <div style={{ textAlign: 'center', padding: '2rem' }}>Loading documents...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="page-content">
@@ -100,7 +160,7 @@ function ConstructIQ() {
               </label>
             </div>
 
-            {error && (
+            {error && !showDeleteModal && (
               <div className="error-message" style={{ marginTop: '1rem' }}>
                 {error}
               </div>
@@ -116,13 +176,18 @@ function ConstructIQ() {
             </div>
           ) : (
             <div className="documents-grid">
-              {uploadedFiles.map((doc, index) => (
-                <div key={index} className="document-card">
+              {uploadedFiles.map((doc) => (
+                <div key={doc.id} className="document-card">
                   <div className="document-header">
                     <h4>📄 {doc.filename}</h4>
                     <span className="upload-time">
-                      {new Date(doc.uploadedAt).toLocaleString()}
+                      {formatDate(doc.uploaded_at)}
                     </span>
+                  </div>
+                  <div className="document-metadata">
+                    <p><strong>Size:</strong> {formatFileSize(doc.file_size)}</p>
+                    <p><strong>Pages:</strong> {doc.page_count || 'Unknown'}</p>
+                    <p><strong>Characters:</strong> {doc.content.length.toLocaleString()}</p>
                   </div>
                   <div className="document-preview">
                     <p>{doc.content.substring(0, 150)}...</p>
@@ -133,6 +198,12 @@ function ConstructIQ() {
                       onClick={() => openDocument(doc)}
                     >
                       View Full Text
+                    </button>
+                    <button 
+                      className="btn btn-small btn-danger"
+                      onClick={() => handleDeleteDocument(doc)}
+                    >
+                      Delete
                     </button>
                   </div>
                 </div>
@@ -170,7 +241,9 @@ function ConstructIQ() {
             </div>
             <div className="modal-body">
               <div className="document-metadata">
-                <p><strong>Uploaded:</strong> {new Date(selectedDocument.uploadedAt).toLocaleString()}</p>
+                <p><strong>Uploaded:</strong> {formatDate(selectedDocument.uploaded_at)}</p>
+                <p><strong>Size:</strong> {formatFileSize(selectedDocument.file_size)}</p>
+                <p><strong>Pages:</strong> {selectedDocument.page_count || 'Unknown'}</p>
                 <p><strong>Characters:</strong> {selectedDocument.content.length.toLocaleString()}</p>
               </div>
               <div className="document-content">
@@ -199,6 +272,17 @@ function ConstructIQ() {
           </div>
         </div>
       )}
+
+      <DeleteModal
+        isOpen={showDeleteModal}
+        title="Delete Document"
+        message="Are you sure you want to delete this document? This action cannot be undone."
+        itemName={deletingDocument?.filename || ''}
+        onConfirm={confirmDelete}
+        onCancel={cancelDelete}
+        isLoading={isDeleting}
+        error={error}
+      />
     </div>
   );
 }
