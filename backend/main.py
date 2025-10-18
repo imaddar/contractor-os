@@ -127,6 +127,20 @@ class Document(BaseModel):
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
+class ChatConversation(BaseModel):
+    id: Optional[str] = None
+    title: str
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+class ChatMessage(BaseModel):
+    id: Optional[str] = None
+    conversation_id: str
+    message_type: str  # 'user' or 'ai'
+    content: str
+    created_at: Optional[str] = None
+    index_order: int
+
 # Basic routes
 @app.get("/")
 async def root():
@@ -826,42 +840,78 @@ chat_graph = create_chat_graph()
 
 # Chat endpoints
 @app.post("/chat/message")
-async def send_chat_message(request_body: dict):
-    """Send a message to the AI chat system."""
+async def send_chat_message(request_body: dict, supabase_client: Client = Depends(get_supabase)):
+    """Send a message to the AI chat system with persistence."""
     if not chat_graph:
         raise HTTPException(status_code=500, detail="Chat functionality is not available")
     
     try:
         message = request_body.get("message", "")
-        thread_id = request_body.get("thread_id", "default")
+        conversation_id = request_body.get("conversation_id")
         
         if not message.strip():
             raise HTTPException(status_code=400, detail="Message cannot be empty")
         
-        config = {"configurable": {"thread_id": thread_id}}
+        if not conversation_id:
+            raise HTTPException(status_code=400, detail="Conversation ID is required")
+        
+        # Get existing messages for context
+        existing_messages = supabase_client.table("chat_messages").select("*").eq("conversation_id", conversation_id).order("index_order").execute()
+        
+        # Build conversation history for LangGraph
+        conversation_messages = []
+        for msg in existing_messages.data:
+            if msg['message_type'] == 'user':
+                conversation_messages.append(HumanMessage(content=msg['content']))
+            else:
+                conversation_messages.append(AIMessage(content=msg['content']))
+        
+        # Add the new user message
+        conversation_messages.append(HumanMessage(content=message))
+        
+        # Get next index order
+        next_index = len(existing_messages.data)
+        
+        # Save user message to database
+        user_message_data = {
+            "conversation_id": conversation_id,
+            "message_type": "user",
+            "content": message,
+            "index_order": next_index
+        }
+        supabase_client.table("chat_messages").insert(user_message_data).execute()
+        
+        config = {"configurable": {"thread_id": conversation_id}}
         
         # Process message through the graph
-        response_messages = []
+        ai_response = None
         for step in chat_graph.stream(
-            {"messages": [HumanMessage(content=message)]},
+            {"messages": conversation_messages},
             config=config,
             stream_mode="values",
         ):
             if step["messages"]:
                 last_message = step["messages"][-1]
                 if last_message.type == "ai" and not last_message.tool_calls:
-                    # Ensure the response is cleaned before sending
+                    # Ensure the response is cleaned before storing
                     cleaned_content = clean_ai_response(last_message.content)
-                    response_messages.append({
-                        "type": "ai",
-                        "content": cleaned_content,
-                        "timestamp": datetime.now().isoformat()
-                    })
+                    ai_response = cleaned_content
+                    break
+        
+        if ai_response:
+            # Save AI response to database
+            ai_message_data = {
+                "conversation_id": conversation_id,
+                "message_type": "ai",
+                "content": ai_response,
+                "index_order": next_index + 1
+            }
+            supabase_client.table("chat_messages").insert(ai_message_data).execute()
         
         return {
-            "thread_id": thread_id,
+            "conversation_id": conversation_id,
             "user_message": message,
-            "ai_responses": response_messages,
+            "ai_response": ai_response,
             "timestamp": datetime.now().isoformat()
         }
         
@@ -869,56 +919,150 @@ async def send_chat_message(request_body: dict):
         print(f"Chat error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
 
-@app.get("/chat/history/{thread_id}")
-async def get_chat_history(thread_id: str):
-    """Get chat history for a specific thread."""
-    if not chat_graph:
-        raise HTTPException(status_code=500, detail="Chat functionality is not available")
-    
+# Chat conversation endpoints
+@app.get("/chat/conversations", response_model=List[ChatConversation])
+async def get_chat_conversations(supabase_client: Client = Depends(get_supabase)):
+    """Get all chat conversations ordered by most recent."""
     try:
-        config = {"configurable": {"thread_id": thread_id}}
-        
-        # Get the current state (conversation history)
-        state = chat_graph.get_state(config)
-        
-        messages = []
-        for msg in state.values.get("messages", []):
-            if msg.type in ["human", "ai"] and not getattr(msg, 'tool_calls', None):
-                messages.append({
-                    "type": msg.type,
-                    "content": msg.content,
-                    "timestamp": datetime.now().isoformat()  # In real app, store actual timestamps
-                })
-        
-        return {
-            "thread_id": thread_id,
-            "messages": messages
-        }
-        
+        result = supabase_client.table("chat_conversations").select("*").order("updated_at", desc=True).execute()
+        return result.data
     except Exception as e:
-        print(f"Chat history error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to get chat history: {str(e)}")
+        print(f"Error fetching conversations: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.delete("/chat/history/{thread_id}")
-async def clear_chat_history(thread_id: str):
-    """Clear chat history for a specific thread."""
+@app.post("/chat/conversations", response_model=ChatConversation)
+async def create_chat_conversation(conversation: ChatConversation, supabase_client: Client = Depends(get_supabase)):
+    """Create a new chat conversation."""
+    try:
+        result = supabase_client.table("chat_conversations").insert(conversation.dict(exclude={"id"})).execute()
+        return result.data[0]
+    except Exception as e:
+        print(f"Error creating conversation: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/chat/conversations/{conversation_id}")
+async def delete_chat_conversation(conversation_id: str, supabase_client: Client = Depends(get_supabase)):
+    """Delete a chat conversation and all its messages."""
+    try:
+        # Use service role client for deletions if available
+        client_to_use = service_supabase if service_supabase else supabase_client
+        
+        # Check if conversation exists
+        conversation_check = client_to_use.table("chat_conversations").select("id").eq("id", conversation_id).execute()
+        if not conversation_check.data:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Delete the conversation (messages will be deleted via CASCADE)
+        result = client_to_use.table("chat_conversations").delete().eq("id", conversation_id).execute()
+        
+        return {"message": "Conversation deleted successfully", "deleted_id": conversation_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error deleting conversation {conversation_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete conversation: {str(e)}")
+
+@app.get("/chat/conversations/{conversation_id}/messages", response_model=List[ChatMessage])
+async def get_conversation_messages(conversation_id: str, supabase_client: Client = Depends(get_supabase)):
+    """Get all messages for a specific conversation."""
+    try:
+        result = supabase_client.table("chat_messages").select("*").eq("conversation_id", conversation_id).order("index_order").execute()
+        return result.data
+    except Exception as e:
+        print(f"Error fetching messages: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/chat/conversations/{conversation_id}/messages", response_model=ChatMessage)
+async def add_message_to_conversation(conversation_id: str, message: ChatMessage, supabase_client: Client = Depends(get_supabase)):
+    """Add a message to a conversation."""
+    try:
+        message.conversation_id = conversation_id
+        result = supabase_client.table("chat_messages").insert(message.dict(exclude={"id"})).execute()
+        return result.data[0]
+    except Exception as e:
+        print(f"Error adding message: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Update the existing chat message endpoint
+@app.post("/chat/message")
+async def send_chat_message(request_body: dict, supabase_client: Client = Depends(get_supabase)):
+    """Send a message to the AI chat system with persistence."""
     if not chat_graph:
         raise HTTPException(status_code=500, detail="Chat functionality is not available")
     
     try:
-        config = {"configurable": {"thread_id": thread_id}}
+        message = request_body.get("message", "")
+        conversation_id = request_body.get("conversation_id")
         
-        # Clear the conversation by creating a new empty state
-        chat_graph.update_state(config, {"messages": []})
+        if not message.strip():
+            raise HTTPException(status_code=400, detail="Message cannot be empty")
+        
+        if not conversation_id:
+            raise HTTPException(status_code=400, detail="Conversation ID is required")
+        
+        # Get existing messages for context
+        existing_messages = supabase_client.table("chat_messages").select("*").eq("conversation_id", conversation_id).order("index_order").execute()
+        
+        # Build conversation history for LangGraph
+        conversation_messages = []
+        for msg in existing_messages.data:
+            if msg['message_type'] == 'user':
+                conversation_messages.append(HumanMessage(content=msg['content']))
+            else:
+                conversation_messages.append(AIMessage(content=msg['content']))
+        
+        # Add the new user message
+        conversation_messages.append(HumanMessage(content=message))
+        
+        # Get next index order
+        next_index = len(existing_messages.data)
+        
+        # Save user message to database
+        user_message_data = {
+            "conversation_id": conversation_id,
+            "message_type": "user",
+            "content": message,
+            "index_order": next_index
+        }
+        supabase_client.table("chat_messages").insert(user_message_data).execute()
+        
+        config = {"configurable": {"thread_id": conversation_id}}
+        
+        # Process message through the graph
+        ai_response = None
+        for step in chat_graph.stream(
+            {"messages": conversation_messages},
+            config=config,
+            stream_mode="values",
+        ):
+            if step["messages"]:
+                last_message = step["messages"][-1]
+                if last_message.type == "ai" and not last_message.tool_calls:
+                    # Ensure the response is cleaned before storing
+                    cleaned_content = clean_ai_response(last_message.content)
+                    ai_response = cleaned_content
+                    break
+        
+        if ai_response:
+            # Save AI response to database
+            ai_message_data = {
+                "conversation_id": conversation_id,
+                "message_type": "ai",
+                "content": ai_response,
+                "index_order": next_index + 1
+            }
+            supabase_client.table("chat_messages").insert(ai_message_data).execute()
         
         return {
-            "message": f"Chat history cleared for thread {thread_id}",
-            "thread_id": thread_id
+            "conversation_id": conversation_id,
+            "user_message": message,
+            "ai_response": ai_response,
+            "timestamp": datetime.now().isoformat()
         }
         
     except Exception as e:
-        print(f"Clear chat history error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to clear chat history: {str(e)}")
+        print(f"Chat error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
 
 # Remove the duplicate debug endpoint that appears twice
 # Keep only one version at the end of the file

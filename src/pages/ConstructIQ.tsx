@@ -2,6 +2,22 @@ import React, { useState, useEffect } from 'react';
 import { documentsApi, type Document } from '../api/documents';
 import DeleteModal from '../components/DeleteModal';
 
+interface ChatConversation {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ChatMessage {
+  id: string;
+  conversation_id: string;
+  message_type: 'user' | 'ai';
+  content: string;
+  created_at: string;
+  index_order: number;
+}
+
 function ConstructIQ() {
   const [uploadedFiles, setUploadedFiles] = useState<Document[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -12,24 +28,24 @@ function ConstructIQ() {
   const [deletingDocument, setDeletingDocument] = useState<Document | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   
-  // Chat-related state
+  // Updated chat-related state
   const [chatMessages, setChatMessages] = useState<Array<{
     type: 'user' | 'ai';
     content: string;
     timestamp: string;
-  }>>([
-    {
-      type: 'ai',
-      content: 'Hello! I\'m ConstructIQ, your AI assistant for construction project management. I can help you analyze documents, plan projects, create schedules, and answer construction-related questions. What would you like to know?',
-      timestamp: new Date().toISOString()
-    }
-  ]);
+  }>>([]);
   const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
-  const [threadId] = useState(() => `thread_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
+  
+  // New conversation management state
+  const [conversations, setConversations] = useState<ChatConversation[]>([]);
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
+  const [showChatHistory, setShowChatHistory] = useState(false);
+  const [isLoadingConversations, setIsLoadingConversations] = useState(false);
 
   useEffect(() => {
     fetchDocuments();
+    fetchConversations();
   }, []);
 
   const fetchDocuments = async () => {
@@ -42,6 +58,21 @@ function ConstructIQ() {
       console.error('Error fetching documents:', err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const fetchConversations = async () => {
+    try {
+      setIsLoadingConversations(true);
+      const response = await fetch('http://localhost:8000/chat/conversations');
+      if (response.ok) {
+        const data = await response.json();
+        setConversations(data);
+      }
+    } catch (err) {
+      console.error('Error fetching conversations:', err);
+    } finally {
+      setIsLoadingConversations(false);
     }
   };
 
@@ -145,8 +176,80 @@ function ConstructIQ() {
     return new Date(dateString).toLocaleString();
   };
 
+  const createNewConversation = async () => {
+    try {
+      const title = `Chat ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`;
+      const response = await fetch('http://localhost:8000/chat/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title })
+      });
+      
+      if (response.ok) {
+        const newConversation = await response.json();
+        setConversations(prev => [newConversation, ...prev]);
+        setCurrentConversationId(newConversation.id);
+        setChatMessages([{
+          type: 'ai',
+          content: 'Hello! I\'m ConstructIQ, your AI assistant for construction project management. How can I help you today?',
+          timestamp: new Date().toISOString()
+        }]);
+        return newConversation.id;
+      }
+    } catch (err) {
+      console.error('Error creating conversation:', err);
+    }
+    return null;
+  };
+
+  const loadConversation = async (conversationId: string) => {
+    try {
+      setCurrentConversationId(conversationId);
+      const response = await fetch(`http://localhost:8000/chat/conversations/${conversationId}/messages`);
+      if (response.ok) {
+        const messages = await response.json();
+        setChatMessages(messages.map((msg: ChatMessage) => ({
+          type: msg.message_type,
+          content: msg.content,
+          timestamp: msg.created_at
+        })));
+      }
+    } catch (err) {
+      console.error('Error loading conversation:', err);
+    }
+  };
+
+  const deleteConversation = async (conversationId: string) => {
+    try {
+      const response = await fetch(`http://localhost:8000/chat/conversations/${conversationId}`, {
+        method: 'DELETE'
+      });
+      
+      if (response.ok) {
+        setConversations(prev => prev.filter(c => c.id !== conversationId));
+        if (currentConversationId === conversationId) {
+          setCurrentConversationId(null);
+          setChatMessages([]);
+        }
+      }
+    } catch (err) {
+      console.error('Error deleting conversation:', err);
+    }
+  };
+
   const handleSendMessage = async () => {
     if (!chatInput.trim() || isChatLoading) return;
+    
+    let conversationId = currentConversationId;
+    
+    // Create new conversation if none exists
+    if (!conversationId) {
+      conversationId = await createNewConversation();
+      if (!conversationId) {
+        setError('Failed to create conversation');
+        return;
+      }
+    }
     
     const userMessage = {
       type: 'user' as const,
@@ -167,7 +270,7 @@ function ConstructIQ() {
         },
         body: JSON.stringify({
           message: userMessage.content,
-          thread_id: threadId
+          conversation_id: conversationId
         }),
       });
       
@@ -177,15 +280,17 @@ function ConstructIQ() {
       
       const data = await response.json();
       
-      // Add AI responses to chat
-      if (data.ai_responses && data.ai_responses.length > 0) {
-        const aiMessages = data.ai_responses.map((resp: any) => ({
-          type: 'ai' as const,
-          content: resp.content,
-          timestamp: resp.timestamp
-        }));
-        setChatMessages(prev => [...prev, ...aiMessages]);
+      // Add AI response to chat
+      if (data.ai_response) {
+        setChatMessages(prev => [...prev, {
+          type: 'ai',
+          content: data.ai_response,
+          timestamp: data.timestamp
+        }]);
       }
+      
+      // Refresh conversations to update the timestamp
+      fetchConversations();
       
     } catch (err) {
       console.error('Chat error:', err);
@@ -202,14 +307,30 @@ function ConstructIQ() {
 
   const clearChatHistory = async () => {
     try {
-      await fetch(`http://localhost:8000/chat/history/${threadId}`, {
+      // If there's no active conversation, just reset the messages locally
+      if (!currentConversationId) {
+        setChatMessages([{
+          type: 'ai',
+          content: 'Hello! I\'m ConstructIQ, your AI assistant for construction project management. How can I help you today?',
+          timestamp: new Date().toISOString()
+        }]);
+        return;
+      }
+
+      // Attempt to clear messages for the current conversation (API endpoint may vary)
+      const response = await fetch(`http://localhost:8000/chat/conversations/${currentConversationId}/messages`, {
         method: 'DELETE',
       });
-      setChatMessages([{
-        type: 'ai',
-        content: 'Hello! I\'m ConstructIQ, your AI assistant for construction project management. How can I help you today?',
-        timestamp: new Date().toISOString()
-      }]);
+
+      if (response.ok) {
+        setChatMessages([{
+          type: 'ai',
+          content: 'Hello! I\'m ConstructIQ, your AI assistant for construction project management. How can I help you today?',
+          timestamp: new Date().toISOString()
+        }]);
+      } else {
+        console.error('Failed to clear chat history:', await response.text());
+      }
     } catch (err) {
       console.error('Error clearing chat:', err);
     }
@@ -235,12 +356,125 @@ function ConstructIQ() {
       </div>
 
       <div className="constructiq-container">
-        <div className="upload-section">
+        {/* AI Chat Section with History Sidebar */}
+        <div className="chat-section">
           <div className="upload-card">
-            <h2>📄 Document Parser</h2>
-            <p>Upload PDF documents to extract and analyze their content using AI. Documents are automatically chunked and stored for intelligent analysis.</p>
+            <div className="chat-header">
+              <h2>🧠 ConstructIQ AI Assistant</h2>
+              <div className="chat-controls">
+                <button 
+                  onClick={() => setShowChatHistory(!showChatHistory)}
+                  className="btn btn-small btn-secondary"
+                >
+                  {showChatHistory ? 'Hide' : 'Show'} History
+                </button>
+                <button 
+                  onClick={createNewConversation}
+                  className="btn btn-small btn-primary"
+                >
+                  New Chat
+                </button>
+              </div>
+            </div>
             
-            <div className="upload-area">
+            <div className="chat-layout">
+              {/* Chat History Sidebar */}
+              {showChatHistory && (
+                <div className="chat-history-sidebar">
+                  <h4>Chat History</h4>
+                  {isLoadingConversations ? (
+                    <div>Loading conversations...</div>
+                  ) : conversations.length === 0 ? (
+                    <div className="empty-history">No conversations yet</div>
+                  ) : (
+                    <div className="conversation-list">
+                      {conversations.map(conversation => (
+                        <div 
+                          key={conversation.id} 
+                          className={`conversation-item ${currentConversationId === conversation.id ? 'active' : ''}`}
+                        >
+                          <div 
+                            className="conversation-title"
+                            onClick={() => loadConversation(conversation.id)}
+                          >
+                            {conversation.title}
+                          </div>
+                          <div className="conversation-meta">
+                            {new Date(conversation.updated_at).toLocaleDateString()}
+                          </div>
+                          <button 
+                            className="delete-conversation"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteConversation(conversation.id);
+                            }}
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              
+              {/* Main Chat Area */}
+              <div className={`chat-main ${showChatHistory ? 'with-sidebar' : ''}`}>
+                <div className="chat-container">
+                  <div className="chat-messages">
+                    {chatMessages.map((message, index) => (
+                      <div key={index} className={`chat-message ${message.type}`}>
+                        <div className="message-avatar">
+                          {message.type === 'user' ? '👤' : '🧠'}
+                        </div>
+                        <div className="message-content">
+                          <div className="message-text">{message.content}</div>
+                          <div className="message-time">
+                            {new Date(message.timestamp).toLocaleTimeString()}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {isChatLoading && (
+                      <div className="chat-message ai">
+                        <div className="message-avatar">🧠</div>
+                        <div className="message-content">
+                          <div className="message-text typing">ConstructIQ is thinking...</div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="chat-input-area">
+                    <div className="chat-input-group">
+                      <input
+                        type="text"
+                        placeholder="Ask ConstructIQ about your projects, documents, or construction topics..."
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
+                        className="chat-input"
+                        disabled={isChatLoading}
+                      />
+                      <button 
+                        onClick={handleSendMessage}
+                        disabled={isChatLoading || !chatInput.trim()}
+                        className="btn btn-primary chat-send-btn"
+                      >
+                        {isChatLoading ? '...' : 'Send'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="documents-section">
+          <div className="documents-header">
+            <h3>📄 Document Library</h3>
+            <div className="upload-controls">
               <input
                 type="file"
                 id="file-upload"
@@ -249,98 +483,37 @@ function ConstructIQ() {
                 disabled={isUploading}
                 style={{ display: 'none' }}
               />
-              <label htmlFor="file-upload" className={`upload-button ${isUploading ? 'uploading' : ''}`}>
+              <label htmlFor="file-upload" className={`btn btn-primary upload-btn ${isUploading ? 'uploading' : ''}`}>
                 {isUploading ? (
                   <>
                     <span className="upload-icon">⏳</span>
-                    Processing & Chunking...
+                    Processing...
                   </>
                 ) : (
                   <>
                     <span className="upload-icon">📎</span>
-                    Upload PDF Document
+                    Upload PDF
                   </>
                 )}
               </label>
             </div>
-
-            {error && !showDeleteModal && (
-              <div className="error-message" style={{ marginTop: '1rem' }}>
-                {error}
-              </div>
-            )}
           </div>
-        </div>
-
-        {/* AI Chat Section */}
-        <div className="chat-section">
-          <div className="upload-card">
-            <div className="chat-header">
-              <h2>🧠 ConstructIQ AI Assistant</h2>
-              <button 
-                onClick={clearChatHistory}
-                className="btn btn-small btn-secondary"
-                style={{ marginLeft: 'auto' }}
-              >
-                Clear Chat
-              </button>
+          
+          {error && !showDeleteModal && (
+            <div className="error-message" style={{ marginBottom: '1rem' }}>
+              {error}
             </div>
-            <p>Ask questions about your documents, get construction advice, or discuss project management topics.</p>
-            
-            <div className="chat-container">
-              <div className="chat-messages">
-                {chatMessages.map((message, index) => (
-                  <div key={index} className={`chat-message ${message.type}`}>
-                    <div className="message-avatar">
-                      {message.type === 'user' ? '👤' : '🧠'}
-                    </div>
-                    <div className="message-content">
-                      <div className="message-text">{message.content}</div>
-                      <div className="message-time">
-                        {new Date(message.timestamp).toLocaleTimeString()}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-                {isChatLoading && (
-                  <div className="chat-message ai">
-                    <div className="message-avatar">🧠</div>
-                    <div className="message-content">
-                      <div className="message-text typing">ConstructIQ is thinking...</div>
-                    </div>
-                  </div>
-                )}
-              </div>
-              
-              <div className="chat-input-area">
-                <div className="chat-input-group">
-                  <input
-                    type="text"
-                    placeholder="Ask ConstructIQ about your projects, documents, or construction topics..."
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
-                    className="chat-input"
-                    disabled={isChatLoading}
-                  />
-                  <button 
-                    onClick={handleSendMessage}
-                    disabled={isChatLoading || !chatInput.trim()}
-                    className="btn btn-primary chat-send-btn"
-                  >
-                    {isChatLoading ? '...' : 'Send'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+          )}
 
-        <div className="documents-section">
-          <h3>Processed Documents</h3>
+          <p className="documents-description">
+            Upload PDF documents to extract and analyze their content using AI. Documents are automatically chunked and stored for intelligent analysis.
+          </p>
+
           {uploadedFiles.length === 0 ? (
             <div className="empty-state">
-              <p>No documents uploaded yet. Upload your first PDF to get started!</p>
+              <div className="empty-icon">📚</div>
+              <h4>No documents uploaded yet</h4>
+              <p>Upload your first PDF to get started with AI-powered document analysis!</p>
             </div>
           ) : (
             <div className="documents-grid">
