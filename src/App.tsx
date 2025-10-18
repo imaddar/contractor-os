@@ -1,5 +1,4 @@
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom'
-import { useState } from 'react'
 import Home from './pages/Home'
 import Projects from './pages/Projects'
 import Schedule from './pages/Schedule'
@@ -8,53 +7,7 @@ import Subcontractors from './pages/Subcontractors'
 import ConstructIQ from './pages/ConstructIQ'
 import './App.css'
 
-function ChatInterface({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }) {
-  const [messages, setMessages] = useState<Array<{ text: string, sender: 'user' | 'ai' }>>([
-    { text: "Hello! I'm your ContractorOS AI assistant. How can I help you today?", sender: 'ai' }
-  ])
-  const [inputValue, setInputValue] = useState('')
-
-  const handleSend = () => {
-    if (inputValue.trim()) {
-      setMessages([...messages, { text: inputValue, sender: 'user' }])
-      setInputValue('')
-      // Simulate AI response
-      setTimeout(() => {
-        setMessages(prev => [...prev, { text: "I'm processing your request. This is a demo response.", sender: 'ai' }])
-      }, 1000)
-    }
-  }
-
-  if (!isOpen) return null
-
-  return (
-    <div className="chat-interface">
-      <div className="chat-header">
-        <h3>AI Assistant</h3>
-        <button onClick={onClose} className="chat-close">×</button>
-      </div>
-      <div className="chat-messages">
-        {messages.map((message, index) => (
-          <div key={index} className={`message ${message.sender}`}>
-            <div className="message-content">{message.text}</div>
-          </div>
-        ))}
-      </div>
-      <div className="chat-input">
-        <input
-          type="text"
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-          placeholder="Ask me anything about your projects..."
-        />
-        <button onClick={handleSend}>Send</button>
-      </div>
-    </div>
-  )
-}
-
-function Navigation({ onChatToggle }: { onChatToggle: () => void }) {
+function Navigation() {
   const location = useLocation()
   
   const navItems = [
@@ -84,23 +37,17 @@ function Navigation({ onChatToggle }: { onChatToggle: () => void }) {
           </li>
         ))}
       </ul>
-      <button onClick={onChatToggle} className="chat-toggle">
-        <span className="icon">💬</span>
-        <span className="label">AI Chat</span>
-      </button>
     </nav>
   )
 }
 
 function App() {
-  const [isChatOpen, setIsChatOpen] = useState(false)
-
   return (
     <Router>
       <div className="app">
-        <Navigation onChatToggle={() => setIsChatOpen(!isChatOpen)} />
+        <Navigation />
         <div className="app-body">
-          <main className={`main-content ${isChatOpen ? 'chat-open' : ''}`}>
+          <main className="main-content">
             <Routes>
               <Route path="/" element={<Home />} />
               <Route path="/projects" element={<Projects />} />
@@ -110,7 +57,6 @@ function App() {
               <Route path="/constructiq" element={<ConstructIQ />} />
             </Routes>
           </main>
-          <ChatInterface isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} />
         </div>
       </div>
     </Router>
@@ -118,3 +64,4 @@ function App() {
 }
 
 export default App
+

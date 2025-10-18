@@ -1,73 +1,91 @@
-# React + TypeScript + Vite
+# ContractorOS
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+**ContractorOS** is a comprehensive construction management platform designed to streamline project workflows, from planning and budgeting to execution and analysis. It features an AI-powered assistant, **ConstructIQ**, to provide intelligent insights from your project documents.
 
-Currently, two official plugins are available:
+## ✨ Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- **Dashboard**: Get a high-level overview of all your projects, tasks, budgets, and deadlines.
+- **Project Management**: Create, track, and manage construction projects from start to finish.
+- **Scheduling**: Plan and visualize project timelines with an interactive calendar and task management.
+- **Budgeting**: Manage project finances, track budgeted vs. actual amounts, and monitor financial health.
+- **Subcontractor Management**: Keep a directory of subcontractors, manage their information, and assign them to tasks.
+- **ConstructIQ (AI Assistant)**:
+    - **Document Parser**: Upload PDF documents (like SOWs, blueprints, contracts) for AI-powered analysis.
+    - **Intelligent Chat**: Converse with an AI that understands your project documents and provides expert construction advice.
+    - **Persistent Conversations**: Chat history is saved, allowing you to revisit past conversations and insights.
 
-## React Compiler
+## 🛠️ Tech Stack
 
-The React Compiler is currently not compatible with SWC. See [this issue](https://github.com/vitejs/vite-plugin-react/issues/428) for tracking the progress.
+- **Frontend**: React, TypeScript, Vite
+- **Backend**: Python, FastAPI
+- **Database**: Supabase (PostgreSQL with pgvector)
+- **AI & Machine Learning**:
+    - LangChain & LangGraph for building AI workflows
+    - Ollama for local LLM hosting (e.g., `qwen3:8b`)
+    - HuggingFace sentence-transformers for document embeddings
 
-## Expanding the ESLint configuration
+## 🚀 Getting Started
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+Follow these instructions to get a local copy up and running for development and testing purposes.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+### Prerequisites
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+- Node.js and npm/yarn/pnpm
+- Python 3.8+ and pip
+- A Supabase account
+- Ollama installed and running with a model (e.g., `ollama run qwen3:8b`)
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+### Backend Setup
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+1.  **Navigate to the backend directory:**
+    ```bash
+    cd backend
+    ```
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+2.  **Create a virtual environment and activate it:**
+    ```bash
+    python -m venv venv
+    source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
+    ```
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+3.  **Install Python dependencies:**
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+4.  **Create a `.env` file** in the `backend` directory and add your Supabase credentials. You can get these from your Supabase project settings.
+    ```env
+    SUPABASE_URL="YOUR_SUPABASE_URL"
+    SUPABASE_ANON_KEY="YOUR_SUPABASE_ANON_KEY"
+    SUPABASE_SERVICE_ROLE_KEY="YOUR_SUPABASE_SERVICE_ROLE_KEY"
+    ```
+
+5.  **Set up the database schema:**
+    - Go to the SQL Editor in your Supabase dashboard.
+    - Run the SQL scripts located in `backend/database/` to create the necessary tables and functions (`schema.sql`, `langchain.sql`, `chat_history.sql`).
+
+6.  **Run the backend server:**
+    ```bash
+    uvicorn main:app --reload
+    ```
+    The backend will be running at `http://localhost:8000`.
+
+### Frontend Setup
+
+1.  **Navigate to the root directory** (if you were in the backend directory).
+    ```bash
+    cd ..
+    ```
+
+2.  **Install frontend dependencies:**
+    ```bash
+    npm install
+    ```
+
+3.  **Run the frontend development server:**
+    ```bash
+    npm run dev
+    ```
+    The frontend will be running at `http://localhost:5173`.
+
+You can now access the application in your browser.
