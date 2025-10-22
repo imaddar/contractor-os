@@ -117,13 +117,13 @@ const Home: React.FC = () => {
             <span className="action-icon">📅</span>
             <span className="action-text">Schedule Task</span>
           </button>
-          <button className="quick-action-compact-btn" onClick={() => navigate('/subcontractors?action=new')}>
-            <span className="action-icon">👤</span>
-            <span className="action-text">Add Subcontractor</span>
-          </button>
           <button className="quick-action-compact-btn" onClick={() => navigate('/budgets?action=new')}>
             <span className="action-icon">💵</span>
             <span className="action-text">Manage Budget</span>
+          </button>
+          <button className="quick-action-compact-btn" onClick={() => navigate('/subcontractors?action=new')}>
+            <span className="action-icon">👤</span>
+            <span className="action-text">Add Subcontractor</span>
           </button>
         </div>
       </div>
