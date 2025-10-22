@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { subcontractorsApi, type Subcontractor } from '../api/subcontractors';
 import EditModal from '../components/EditModal';
 import DeleteModal from '../components/DeleteModal';
 
 const Subcontractors: React.FC = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [subcontractors, setSubcontractors] = useState<Subcontractor[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -23,6 +25,15 @@ const Subcontractors: React.FC = () => {
   useEffect(() => {
     fetchSubcontractors();
   }, []);
+
+  useEffect(() => {
+    // Check if we should open the modal from URL parameter
+    if (searchParams.get('action') === 'new') {
+      setShowEditModal(true);
+      // Clear the URL parameter
+      setSearchParams({});
+    }
+  }, [searchParams, setSearchParams]);
 
   const fetchSubcontractors = async () => {
     try {

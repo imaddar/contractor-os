@@ -3,6 +3,7 @@ import { budgetsApi, type Budget } from '../api/budgets';
 import { projectsApi, type Project } from '../api/projects';
 import EditModal from '../components/EditModal';
 import DeleteModal from '../components/DeleteModal';
+import { useSearchParams } from 'react-router-dom';
 
 const Budgets: React.FC = () => {
   const [budgets, setBudgets] = useState<Budget[]>([]);
@@ -20,10 +21,20 @@ const Budgets: React.FC = () => {
     budgeted_amount: '',
     actual_amount: ''
   });
+  const [searchParams, setSearchParams] = useSearchParams();
 
   useEffect(() => {
     fetchData();
   }, []);
+
+  useEffect(() => {
+    // Check if we should open the modal from URL parameter
+    if (searchParams.get('action') === 'new') {
+      setShowEditModal(true);
+      // Clear the URL parameter
+      setSearchParams({});
+    }
+  }, [searchParams, setSearchParams]);
 
   const fetchData = async () => {
     try {

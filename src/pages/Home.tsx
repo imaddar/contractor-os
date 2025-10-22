@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { projectsApi } from '../api/projects';
 import { schedulesApi } from '../api/schedules';
 import { budgetsApi } from '../api/budgets';
@@ -13,6 +14,7 @@ interface DashboardStats {
 }
 
 const Home: React.FC = () => {
+  const navigate = useNavigate();
   const [stats, setStats] = useState<DashboardStats>({
     activeProjects: 0,
     pendingTasks: 0,
@@ -163,19 +165,19 @@ const Home: React.FC = () => {
       <div className="dashboard-quick-actions">
         <h2>Quick Actions</h2>
         <div className="quick-actions-grid">
-          <button className="quick-action-btn" onClick={() => window.location.href = '/projects'}>
+          <button className="quick-action-btn" onClick={() => navigate('/projects?action=new')}>
             <span className="action-icon">➕</span>
             <span className="action-text">New Project</span>
           </button>
-          <button className="quick-action-btn" onClick={() => window.location.href = '/schedule'}>
+          <button className="quick-action-btn" onClick={() => navigate('/schedule?action=new')}>
             <span className="action-icon">📅</span>
             <span className="action-text">Schedule Task</span>
           </button>
-          <button className="quick-action-btn" onClick={() => window.location.href = '/subcontractors'}>
+          <button className="quick-action-btn" onClick={() => navigate('/subcontractors?action=new')}>
             <span className="action-icon">👤</span>
             <span className="action-text">Add Subcontractor</span>
           </button>
-          <button className="quick-action-btn" onClick={() => window.location.href = '/budgets'}>
+          <button className="quick-action-btn" onClick={() => navigate('/budgets?action=new')}>
             <span className="action-icon">💵</span>
             <span className="action-text">Manage Budget</span>
           </button>

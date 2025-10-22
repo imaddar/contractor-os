@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { schedulesApi, type Schedule } from '../api/schedules';
 import { projectsApi, type Project } from '../api/projects';
 import { subcontractorsApi, type Subcontractor } from '../api/subcontractors';
@@ -7,6 +8,7 @@ import EditModal from '../components/EditModal';
 import DeleteModal from '../components/DeleteModal';
 
 const SchedulePage: React.FC = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [subcontractors, setSubcontractors] = useState<Subcontractor[]>([]);
@@ -32,6 +34,15 @@ const SchedulePage: React.FC = () => {
   useEffect(() => {
     fetchData();
   }, []);
+
+  useEffect(() => {
+    // Check if we should open the modal from URL parameter
+    if (searchParams.get('action') === 'new') {
+      setShowEditModal(true);
+      // Clear the URL parameter
+      setSearchParams({});
+    }
+  }, [searchParams, setSearchParams]);
 
   const fetchData = async () => {
     try {
