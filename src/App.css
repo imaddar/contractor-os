@@ -2191,3 +2191,123 @@ body {
   gap: var(--space-sm);
   margin: 0;
 }
+
+/* Compact Quick Actions (for top of dashboard) */
+.dashboard-quick-actions-compact {
+  margin-bottom: var(--space-xl);
+  padding: var(--space-lg);
+  background: linear-gradient(135deg, var(--steel-800) 0%, var(--steel-700) 100%);
+  border: 1px solid var(--steel-600);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.quick-actions-label {
+  color: var(--steel-300);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin: 0 0 var(--space-md) 0;
+  padding-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--steel-600);
+}
+
+.quick-actions-compact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-sm);
+}
+
+.quick-action-compact-btn {
+  background: var(--steel-600);
+  border: 1px solid var(--steel-500);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
+  color: var(--steel-100);
+  cursor: pointer;
+  transition: all var(--transition-normal);
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  text-decoration: none;
+  position: relative;
+  overflow: hidden;
+  font-family: var(--font-primary);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.quick-action-compact-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 107, 53, 0.1), transparent);
+  transition: left var(--transition-fast);
+}
+
+.quick-action-compact-btn:hover::before {
+  left: 100%;
+}
+
+.quick-action-compact-btn:hover {
+  background: var(--steel-500);
+  border-color: var(--orange-500);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+  color: var(--steel-50);
+}
+
+.quick-action-compact-btn .action-icon {
+  font-size: 1.1rem;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 107, 53, 0.1);
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+
+.quick-action-compact-btn .action-text {
+  font-weight: 500;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+/* Responsive adjustments for compact quick actions */
+@media (max-width: 768px) {
+  .dashboard-quick-actions-compact {
+    padding: var(--space-md);
+  }
+  
+  .quick-actions-compact-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-xs);
+  }
+  
+  .quick-action-compact-btn {
+    padding: var(--space-xs) var(--space-sm);
+    font-size: 0.8rem;
+  }
+  
+  .quick-action-compact-btn .action-icon {
+    font-size: 1rem;
+    width: 24px;
+    height: 24px;
+  }
+  
+  .quick-action-compact-btn .action-text {
+    font-size: 0.8rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .quick-actions-compact-grid {
+    grid-template-columns: 1fr;
+  }
+}

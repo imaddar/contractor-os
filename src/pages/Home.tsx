@@ -106,6 +106,28 @@ const Home: React.FC = () => {
         </div>
       )}
 
+      <div className="dashboard-quick-actions-compact">
+        <h3 className="quick-actions-label">Quick Actions</h3>
+        <div className="quick-actions-compact-grid">
+          <button className="quick-action-compact-btn" onClick={() => navigate('/projects?action=new')}>
+            <span className="action-icon">➕</span>
+            <span className="action-text">New Project</span>
+          </button>
+          <button className="quick-action-compact-btn" onClick={() => navigate('/schedule?action=new')}>
+            <span className="action-icon">📅</span>
+            <span className="action-text">Schedule Task</span>
+          </button>
+          <button className="quick-action-compact-btn" onClick={() => navigate('/subcontractors?action=new')}>
+            <span className="action-icon">👤</span>
+            <span className="action-text">Add Subcontractor</span>
+          </button>
+          <button className="quick-action-compact-btn" onClick={() => navigate('/budgets?action=new')}>
+            <span className="action-icon">💵</span>
+            <span className="action-text">Manage Budget</span>
+          </button>
+        </div>
+      </div>
+
       <div className="dashboard-grid">
         <div className="dashboard-card">
           <div className="card-icon">🏗️</div>
@@ -159,28 +181,6 @@ const Home: React.FC = () => {
             <div className="card-number">AI</div>
             <p className="card-description">Smart insights ready</p>
           </div>
-        </div>
-      </div>
-
-      <div className="dashboard-quick-actions">
-        <h2>Quick Actions</h2>
-        <div className="quick-actions-grid">
-          <button className="quick-action-btn" onClick={() => navigate('/projects?action=new')}>
-            <span className="action-icon">➕</span>
-            <span className="action-text">New Project</span>
-          </button>
-          <button className="quick-action-btn" onClick={() => navigate('/schedule?action=new')}>
-            <span className="action-icon">📅</span>
-            <span className="action-text">Schedule Task</span>
-          </button>
-          <button className="quick-action-btn" onClick={() => navigate('/subcontractors?action=new')}>
-            <span className="action-icon">👤</span>
-            <span className="action-text">Add Subcontractor</span>
-          </button>
-          <button className="quick-action-btn" onClick={() => navigate('/budgets?action=new')}>
-            <span className="action-icon">💵</span>
-            <span className="action-text">Manage Budget</span>
-          </button>
         </div>
       </div>
 
