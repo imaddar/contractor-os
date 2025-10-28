@@ -1,4 +1,5 @@
-import React from 'react';
+import React from "react";
+import { Icon } from "./Icon";
 
 interface DeleteModalProps {
   isOpen: boolean;
@@ -19,37 +20,57 @@ const DeleteModal: React.FC<DeleteModalProps> = ({
   onConfirm,
   onCancel,
   isLoading = false,
-  error = null
+  error = null,
 }) => {
-  console.log('DeleteModal render:', { isOpen, title, itemName, isLoading, error });
+  console.log("DeleteModal render:", {
+    isOpen,
+    title,
+    itemName,
+    isLoading,
+    error,
+  });
 
   if (!isOpen) return null;
 
   const handleConfirm = () => {
-    console.log('Delete confirmed for:', itemName);
+    console.log("Delete confirmed for:", itemName);
     onConfirm();
   };
 
   const handleCancel = () => {
-    console.log('Delete cancelled for:', itemName);
+    console.log("Delete cancelled for:", itemName);
     onCancel();
   };
 
   return (
     <div className="modal-overlay" onClick={handleCancel}>
-      <div className="modal-content delete-modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal-content delete-modal"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-header">
           <h3>{title}</h3>
-          <button onClick={handleCancel} className="modal-close">×</button>
+          <button
+            onClick={handleCancel}
+            className="modal-close"
+            aria-label="Close"
+          >
+            <Icon name="close" size={18} />
+          </button>
         </div>
         <div className="modal-body">
           {error && (
-            <div className="error-message" style={{ marginBottom: 'var(--space-lg)' }}>
+            <div
+              className="error-message"
+              style={{ marginBottom: "var(--space-lg)" }}
+            >
               {error}
             </div>
           )}
           <div className="delete-warning">
-            <div className="warning-icon">⚠️</div>
+            <div className="warning-icon">
+              <Icon name="warning" size={20} />
+            </div>
             <div className="warning-content">
               <p>{message}</p>
               <p className="item-name">"{itemName}"</p>
@@ -58,14 +79,14 @@ const DeleteModal: React.FC<DeleteModalProps> = ({
           </div>
         </div>
         <div className="modal-actions">
-          <button 
+          <button
             onClick={handleConfirm}
             className="btn btn-danger"
             disabled={isLoading}
           >
-            {isLoading ? 'Deleting...' : 'Delete'}
+            {isLoading ? "Deleting..." : "Delete"}
           </button>
-          <button 
+          <button
             onClick={handleCancel}
             className="btn btn-secondary"
             disabled={isLoading}

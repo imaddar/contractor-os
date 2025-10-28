@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import type { Schedule } from '../api/schedules';
-import type { Project } from '../api/projects';
+import React, { useState, useEffect } from "react";
+import type { Schedule } from "../api/schedules";
+import type { Project } from "../api/projects";
+import { Icon } from "./Icon";
 
 interface CalendarProps {
   schedules: Schedule[];
@@ -16,20 +17,29 @@ interface CalendarEvent {
   endDate: Date;
 }
 
-const Calendar: React.FC<CalendarProps> = ({ schedules, projects, onDateClick, onEventClick }) => {
+const Calendar: React.FC<CalendarProps> = ({
+  schedules,
+  projects,
+  onDateClick,
+  onEventClick,
+}) => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
 
   useEffect(() => {
     const events = schedules
-      .filter(schedule => schedule.start_date && schedule.end_date)
-      .map(schedule => {
-        const project = projects.find(p => p.id === schedule.project_id);
+      .filter((schedule) => schedule.start_date && schedule.end_date)
+      .map((schedule) => {
+        const project = projects.find((p) => p.id === schedule.project_id);
         return {
           schedule,
-          project: project || { id: 0, name: 'Unknown Project', status: 'active' },
+          project: project || {
+            id: 0,
+            name: "Unknown Project",
+            status: "active",
+          },
           startDate: new Date(schedule.start_date!),
-          endDate: new Date(schedule.end_date!)
+          endDate: new Date(schedule.end_date!),
         };
       });
     setCalendarEvents(events);
@@ -44,19 +54,31 @@ const Calendar: React.FC<CalendarProps> = ({ schedules, projects, onDateClick, o
   };
 
   const getEventsForDate = (date: Date) => {
-    return calendarEvents.filter(event => {
-      const eventStart = new Date(event.startDate.getFullYear(), event.startDate.getMonth(), event.startDate.getDate());
-      const eventEnd = new Date(event.endDate.getFullYear(), event.endDate.getMonth(), event.endDate.getDate());
-      const targetDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-      
+    return calendarEvents.filter((event) => {
+      const eventStart = new Date(
+        event.startDate.getFullYear(),
+        event.startDate.getMonth(),
+        event.startDate.getDate(),
+      );
+      const eventEnd = new Date(
+        event.endDate.getFullYear(),
+        event.endDate.getMonth(),
+        event.endDate.getDate(),
+      );
+      const targetDate = new Date(
+        date.getFullYear(),
+        date.getMonth(),
+        date.getDate(),
+      );
+
       return targetDate >= eventStart && targetDate <= eventEnd;
     });
   };
 
-  const navigateMonth = (direction: 'prev' | 'next') => {
-    setCurrentDate(prev => {
+  const navigateMonth = (direction: "prev" | "next") => {
+    setCurrentDate((prev) => {
       const newDate = new Date(prev);
-      if (direction === 'prev') {
+      if (direction === "prev") {
         newDate.setMonth(prev.getMonth() - 1);
       } else {
         newDate.setMonth(prev.getMonth() + 1);
@@ -70,7 +92,7 @@ const Calendar: React.FC<CalendarProps> = ({ schedules, projects, onDateClick, o
   };
 
   const formatMonth = (date: Date) => {
-    return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    return date.toLocaleDateString("en-US", { month: "long", year: "numeric" });
   };
 
   const daysInMonth = getDaysInMonth(currentDate);
@@ -79,14 +101,14 @@ const Calendar: React.FC<CalendarProps> = ({ schedules, projects, onDateClick, o
 
   const renderCalendarDays = () => {
     const days = [];
-    const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const daysOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
     // Header row
-    daysOfWeek.forEach(day => {
+    daysOfWeek.forEach((day) => {
       days.push(
         <div key={day} className="calendar-day-header">
           {day}
-        </div>
+        </div>,
       );
     });
 
@@ -97,14 +119,18 @@ const Calendar: React.FC<CalendarProps> = ({ schedules, projects, onDateClick, o
 
     // Days of the month
     for (let day = 1; day <= daysInMonth; day++) {
-      const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
+      const date = new Date(
+        currentDate.getFullYear(),
+        currentDate.getMonth(),
+        day,
+      );
       const isToday = date.toDateString() === today.toDateString();
       const events = getEventsForDate(date);
 
       days.push(
         <div
           key={day}
-          className={`calendar-day ${isToday ? 'today' : ''}`}
+          className={`calendar-day ${isToday ? "today" : ""}`}
           onClick={() => onDateClick(date)}
         >
           <div className="day-number">{day}</div>
@@ -119,18 +145,14 @@ const Calendar: React.FC<CalendarProps> = ({ schedules, projects, onDateClick, o
                 }}
                 title={`${event.schedule.task_name} - ${event.project.name}`}
               >
-                <span className="event-text">
-                  {event.schedule.task_name}
-                </span>
+                <span className="event-text">{event.schedule.task_name}</span>
               </div>
             ))}
             {events.length > 3 && (
-              <div className="more-events">
-                +{events.length - 3} more
-              </div>
+              <div className="more-events">+{events.length - 3} more</div>
             )}
           </div>
-        </div>
+        </div>,
       );
     }
 
@@ -141,21 +163,27 @@ const Calendar: React.FC<CalendarProps> = ({ schedules, projects, onDateClick, o
     <div className="calendar-container">
       <div className="calendar-header">
         <div className="calendar-nav">
-          <button onClick={() => navigateMonth('prev')} className="nav-button">
-            ‹
+          <button
+            onClick={() => navigateMonth("prev")}
+            className="nav-button"
+            aria-label="Previous month"
+          >
+            <Icon name="arrow-left" size={18} />
           </button>
           <h2 className="calendar-title">{formatMonth(currentDate)}</h2>
-          <button onClick={() => navigateMonth('next')} className="nav-button">
-            ›
+          <button
+            onClick={() => navigateMonth("next")}
+            className="nav-button"
+            aria-label="Next month"
+          >
+            <Icon name="arrow-right" size={18} />
           </button>
         </div>
         <button onClick={goToToday} className="today-button">
           Today
         </button>
       </div>
-      <div className="calendar-grid">
-        {renderCalendarDays()}
-      </div>
+      <div className="calendar-grid">{renderCalendarDays()}</div>
     </div>
   );
 };
