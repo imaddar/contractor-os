@@ -1,10 +1,10 @@
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Body
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 import os
 from dotenv import load_dotenv
 from typing import Dict, List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 import uvicorn
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import CharacterTextSplitter
@@ -12,6 +12,8 @@ from langchain_community.vectorstores import SupabaseVectorStore
 from langchain_huggingface import HuggingFaceEmbeddings
 import tempfile
 import os as file_os
+import json
+import re
 from datetime import datetime
 from uuid import UUID
 from langchain_ollama import ChatOllama
@@ -144,6 +146,80 @@ class Document(BaseModel):
     uploaded_at: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+
+
+class GeneratedProjectDetails(BaseModel):
+    name: str
+    description: str
+    address: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    budget_estimate: Optional[float] = None
+    budget_currency: str = "USD"
+    assumptions: Optional[List[str]] = None
+    confidence: Optional[str] = None
+    additional_notes: Optional[str] = None
+
+    @validator("budget_estimate", pre=True)
+    def _parse_budget(cls, value):
+        if value is None or value == "":
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            cleaned = re.sub(r"[^0-9.]", "", value)
+            try:
+                return float(cleaned) if cleaned else None
+            except ValueError:
+                return None
+        return None
+
+    @validator("start_date", "end_date", pre=True)
+    def _normalize_date(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return None
+            lowered = stripped.lower()
+            if lowered in {"unknown", "n/a", "tbd", "unspecified"}:
+                return None
+            # Accept ISO-like dates only
+            iso_match = re.match(r"^\d{4}-\d{2}-\d{2}$", stripped)
+            if iso_match:
+                return stripped
+        return None
+
+    @validator("assumptions", pre=True)
+    def _coerce_assumptions(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, list):
+            cleaned = [str(item).strip() for item in value if str(item).strip()]
+            return cleaned or None
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return None
+            # Split on semicolons if multiple listed in a single string
+            if ";" in stripped:
+                parts = [segment.strip() for segment in stripped.split(";") if segment.strip()]
+                return parts or None
+            return [stripped]
+        return None
+
+
+class GenerateProjectRequest(BaseModel):
+    persist: bool = False
+
+
+class GenerateProjectResponse(BaseModel):
+    source_filename: str
+    project: GeneratedProjectDetails
+    raw_response: Optional[str] = None
+    persisted: bool = False
+    created_project: Optional[Project] = None
 
 
 class ChatConversation(BaseModel):
@@ -846,6 +922,135 @@ async def delete_document_by_filename(
             status_code=500, detail=f"Failed to delete document: {str(e)}"
         )
 
+@app.post(
+    "/documents/{filename}/generate-project", response_model=GenerateProjectResponse
+)
+async def generate_project_from_document(
+    filename: str,
+    request: GenerateProjectRequest = Body(default=GenerateProjectRequest()),
+    supabase_client: Client = Depends(get_supabase),
+):
+    try:
+        document = await get_document_by_filename(filename, supabase_client)
+    except HTTPException:
+        raise
+    except Exception as fetch_error:
+        print(f"Error retrieving document {filename}: {fetch_error}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve document '{filename}': {fetch_error}",
+        )
+
+    document_text = (document.get("content") or "").strip()
+    if not document_text:
+        raise HTTPException(
+            status_code=400,
+            detail="Document does not contain extracted text to analyze",
+        )
+
+    max_chars = int(os.getenv("PROJECT_GENERATION_MAX_CHARS", "8000"))
+    truncated_text = document_text[:max_chars]
+    if len(document_text) > max_chars:
+        truncated_text += (
+            f"\n\n[Content truncated to the first {max_chars} characters for analysis]"
+        )
+
+    if not ensure_chat_backend():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Project generation model is unavailable. "
+                "Ensure the local Ollama service is running."
+            ),
+        )
+
+    system_prompt = (
+        "You are ConstructIQ, an AI analyst who produces concise construction project briefs. "
+        "Return ONLY valid JSON that matches this schema:\n"
+        "{\n"
+        '  "name": "Project title",\n'
+        '  "description": "Two to three sentence overview of scope, stakeholders, and key constraints.",\n'
+        '  "address": "Street, City, State" (estimate if missing),\n'
+        '  "start_date": "YYYY-MM-DD" (realistic projection; infer if necessary),\n'
+        '  "end_date": "YYYY-MM-DD" (after start_date; infer if necessary),\n'
+        '  "budget_estimate": 1234567.89 (plain number, no commas or symbols),\n'
+        '  "budget_currency": "USD",\n'
+        '  "assumptions": ["List assumptions or inferences that were required"],\n'
+        '  "confidence": "high" | "medium" | "low",\n'
+        '  "additional_notes": "Optional note about risks or follow-up actions."\n'
+        "}\n"
+        "Never include explanations outside the JSON. Prefer realistic commercial construction values."
+    )
+
+    human_prompt = (
+        f"Document filename: {filename}\n"
+        "Analyze the construction project described in the following PDF text and "
+        "produce the required JSON summary.\n"
+        "Document excerpt:\n"
+        "<<BEGIN DOCUMENT>>\n"
+        f"{truncated_text}\n"
+        "<<END DOCUMENT>>"
+    )
+
+    try:
+        llm_response = chat_llm.invoke(
+            [SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)]
+        )
+        raw_content = getattr(llm_response, "content", str(llm_response))
+    except Exception as llm_error:
+        print(f"Project generation LLM error: {llm_error}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate project summary: {llm_error}",
+        )
+
+    cleaned_content = clean_ai_response(raw_content)
+    try:
+        structured_payload = extract_json_block(cleaned_content)
+        generated_project = GeneratedProjectDetails(**structured_payload)
+    except Exception as parsing_error:
+        print(f"Project generation parsing error: {parsing_error}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Unable to parse AI response into project data: {parsing_error}",
+        )
+
+    created_project: Optional[Project] = None
+    persisted = False
+    if request.persist:
+        project_record = Project(
+            name=generated_project.name,
+            description=generated_project.description,
+            address=generated_project.address,
+            status="planning",
+            start_date=generated_project.start_date,
+            end_date=generated_project.end_date,
+            budget=generated_project.budget_estimate,
+        )
+        try:
+            insertion = (
+                supabase_client.table("projects")
+                .insert(project_record.dict(exclude={"id"}, exclude_none=True))
+                .execute()
+            )
+            if insertion.data:
+                created_project = Project(**insertion.data[0])
+                persisted = True
+        except Exception as insert_error:
+            print(f"Project persistence error: {insert_error}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to persist generated project: {insert_error}",
+            )
+
+    return GenerateProjectResponse(
+        source_filename=filename,
+        project=generated_project,
+        raw_response=cleaned_content,
+        persisted=persisted,
+        created_project=created_project,
+    )
+
 
 # Document parsing endpoint (updated for RAG-style chunking)
 @app.post("/parse-document")
@@ -1053,8 +1258,6 @@ def generate_response(state: MessagesState):
 
 def clean_ai_response(content: str) -> str:
     """Remove <think> sections from AI responses."""
-    import re
-
     # Remove <think>...</think> blocks (case insensitive, multiline)
     cleaned = re.sub(
         r"<think>.*?</think>\s*", "", content, flags=re.DOTALL | re.IGNORECASE
@@ -1069,6 +1272,28 @@ def clean_ai_response(content: str) -> str:
     cleaned = cleaned.strip()
 
     return cleaned
+
+
+def extract_json_block(text: str) -> dict:
+    """Extract and parse the first JSON object found within the text."""
+    if not text:
+        raise ValueError("Empty response text")
+
+    code_fence_match = re.search(
+        r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL | re.IGNORECASE
+    )
+    if code_fence_match:
+        candidate = code_fence_match.group(1)
+    else:
+        brace_match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+        if not brace_match:
+            raise ValueError("No JSON object found in response")
+        candidate = brace_match.group(0)
+
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError as decode_error:
+        raise ValueError(f"Failed to parse JSON: {decode_error}") from decode_error
 
 
 # Build the chat graph
