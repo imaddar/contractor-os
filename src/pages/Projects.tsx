@@ -16,6 +16,7 @@ const Projects: React.FC = () => {
   const [formData, setFormData] = useState({
     name: '',
     description: '',
+    address: '',
     status: 'active',
     start_date: '',
     end_date: '',
@@ -54,6 +55,7 @@ const Projects: React.FC = () => {
     setFormData({
       name: project.name,
       description: project.description || '',
+      address: project.address || '',
       status: project.status,
       start_date: project.start_date || '',
       end_date: project.end_date || '',
@@ -102,6 +104,7 @@ const Projects: React.FC = () => {
       const projectData = {
         name: formData.name,
         description: formData.description || undefined,
+        address: formData.address || undefined,
         status: formData.status,
         start_date: formData.start_date || undefined,
         end_date: formData.end_date || undefined,
@@ -128,6 +131,7 @@ const Projects: React.FC = () => {
     setFormData({
       name: '',
       description: '',
+      address: '',
       status: 'active',
       start_date: '',
       end_date: '',
@@ -178,6 +182,12 @@ const Projects: React.FC = () => {
                 )}
                 
                 <div className="project-details">
+                  {project.address && (
+                    <div className="detail">
+                      <strong>Address:</strong>
+                      <span>{project.address}</span>
+                    </div>
+                  )}
                   {project.start_date && (
                     <div className="detail">
                       <strong>Start:</strong> {new Date(project.start_date).toLocaleDateString()}
@@ -241,6 +251,17 @@ const Projects: React.FC = () => {
             value={formData.description}
             onChange={(e) => setFormData({ ...formData, description: e.target.value })}
             rows={3}
+          />
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="address">Address</label>
+          <input
+            type="text"
+            id="address"
+            value={formData.address}
+            onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+            placeholder="123 Main St, City, State"
           />
         </div>
 

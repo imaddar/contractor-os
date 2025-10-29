@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS projects (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT,
+    address TEXT,
     status VARCHAR(50) DEFAULT 'active',
     start_date DATE,
     end_date DATE,
@@ -10,6 +11,9 @@ CREATE TABLE IF NOT EXISTS projects (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+ALTER TABLE projects
+ADD COLUMN IF NOT EXISTS address TEXT;
 
 -- Create subcontractors table
 CREATE TABLE IF NOT EXISTS subcontractors (

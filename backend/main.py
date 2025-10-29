@@ -101,6 +101,7 @@ class Project(BaseModel):
     id: Optional[int] = None
     name: str
     description: Optional[str] = None
+    address: Optional[str] = None
     status: str = "active"
     start_date: Optional[str] = None
     end_date: Optional[str] = None

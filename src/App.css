@@ -389,6 +389,8 @@ button {
 .project-details .detail {
     display: flex;
     gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: flex-start;
     font-size: 0.9rem;
     color: var(--text-muted);
 }
