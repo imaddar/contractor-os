@@ -883,6 +883,7 @@ button {
     justify-content: center;
     padding: 2rem;
     z-index: 20;
+    overflow-y: auto;
 }
 
 .modal-content {
@@ -891,10 +892,17 @@ button {
     border: 1px solid var(--border-strong);
     box-shadow: var(--shadow-lg);
     width: min(640px, 100%);
-    max-height: 80vh;
+    max-height: min(90vh, calc(100vh - 2rem));
     overflow: hidden;
     display: flex;
     flex-direction: column;
+}
+
+.modal-content form {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
 }
 
 .modal-header {
@@ -928,6 +936,8 @@ button {
     display: flex;
     flex-direction: column;
     gap: 1.25rem;
+    flex: 1;
+    min-height: 0;
 }
 
 .modal-actions {
