@@ -67,12 +67,14 @@ const UnifiedAutoGenModal: React.FC<UnifiedAutoGenModalProps> = ({
   };
 
   // Find documents that already have projects created
+  // NOTE: This is a simple heuristic. For production, consider storing
+  // explicit document-to-project relationships in the database.
   const documentProjectMap = new Map<string, boolean>();
   documents.forEach((doc) => {
-    // Check if any project has the same name as this document (simple heuristic)
-    const hasProject = projects.some((proj) =>
-      doc.filename.toLowerCase().includes(proj.name.toLowerCase()) ||
-      proj.name.toLowerCase().includes(doc.filename.toLowerCase().replace('.pdf', ''))
+    // Check if any project name exactly matches the document filename (without .pdf)
+    const docNameWithoutExt = doc.filename.toLowerCase().replace('.pdf', '').trim();
+    const hasProject = projects.some(
+      (proj) => proj.name.toLowerCase().trim() === docNameWithoutExt
     );
     documentProjectMap.set(doc.filename, hasProject);
   });
@@ -188,9 +190,15 @@ const UnifiedAutoGenModal: React.FC<UnifiedAutoGenModalProps> = ({
                       >
                         <input
                           type="checkbox"
-                          checked={selectedProjectIds.includes(project.id!)}
-                          onChange={() => handleProjectToggle(project.id!)}
-                          disabled={isGenerating}
+                          checked={
+                            project.id
+                              ? selectedProjectIds.includes(project.id)
+                              : false
+                          }
+                          onChange={() =>
+                            project.id && handleProjectToggle(project.id)
+                          }
+                          disabled={isGenerating || !project.id}
                         />
                         <span>
                           {project.name}

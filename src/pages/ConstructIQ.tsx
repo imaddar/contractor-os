@@ -417,10 +417,10 @@ function ConstructIQ() {
       setIsGenerating(false);
       setGenerationProgress("");
       setThinkingText("");
-      // Auto-close progress modal after a short delay
+      // Keep modal open for 3 seconds so user can see completion message
       setTimeout(() => {
         setShowProgressModal(false);
-      }, 2000);
+      }, 3000);
     }
   };
 
