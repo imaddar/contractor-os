@@ -222,6 +222,44 @@ class GenerateProjectResponse(BaseModel):
     created_project: Optional[Project] = None
 
 
+class GeneratedTaskDetails(BaseModel):
+    task_name: str
+    description: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    status: str = "pending"
+
+    @validator("start_date", "end_date", pre=True)
+    def _normalize_date(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return None
+            lowered = stripped.lower()
+            if lowered in {"unknown", "n/a", "tbd", "unspecified"}:
+                return None
+            # Accept ISO-like dates only
+            iso_match = re.match(r"^\d{4}-\d{2}-\d{2}$", stripped)
+            if iso_match:
+                return stripped
+        return None
+
+
+class GenerateTasksRequest(BaseModel):
+    persist: bool = False
+    project_id: Optional[int] = None
+
+
+class GenerateTasksResponse(BaseModel):
+    source_filename: str
+    tasks: List[GeneratedTaskDetails]
+    raw_response: Optional[str] = None
+    persisted: bool = False
+    created_tasks: Optional[List[Schedule]] = None
+
+
 class ChatConversation(BaseModel):
     id: Optional[str] = None
     title: str
@@ -1049,6 +1087,137 @@ async def generate_project_from_document(
         raw_response=cleaned_content,
         persisted=persisted,
         created_project=created_project,
+    )
+
+
+@app.post(
+    "/documents/{filename}/generate-tasks", response_model=GenerateTasksResponse
+)
+async def generate_tasks_from_document(
+    filename: str,
+    request: GenerateTasksRequest = Body(default=GenerateTasksRequest()),
+    supabase_client: Client = Depends(get_supabase),
+):
+    try:
+        document = await get_document_by_filename(filename, supabase_client)
+    except HTTPException:
+        raise
+    except Exception as fetch_error:
+        print(f"Error retrieving document {filename}: {fetch_error}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve document '{filename}': {fetch_error}",
+        )
+
+    document_text = (document.get("content") or "").strip()
+    if not document_text:
+        raise HTTPException(
+            status_code=400,
+            detail="Document does not contain extracted text to analyze",
+        )
+
+    max_chars = int(os.getenv("PROJECT_GENERATION_MAX_CHARS", "8000"))
+    truncated_text = document_text[:max_chars]
+    if len(document_text) > max_chars:
+        truncated_text += (
+            f"\n\n[Content truncated to the first {max_chars} characters for analysis]"
+        )
+
+    if not ensure_chat_backend():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Task generation model is unavailable. "
+                "Ensure the local Ollama service is running."
+            ),
+        )
+
+    system_prompt = (
+        "You are ConstructIQ, an AI analyst who generates construction project task lists. "
+        "Return ONLY valid JSON that matches this schema:\n"
+        "{\n"
+        '  "tasks": [\n'
+        "    {\n"
+        '      "task_name": "Task name",\n'
+        '      "description": "Brief description of the task",\n'
+        '      "start_date": "YYYY-MM-DD" (optional, realistic projection),\n'
+        '      "end_date": "YYYY-MM-DD" (optional, after start_date),\n'
+        '      "status": "pending"\n'
+        "    }\n"
+        "  ]\n"
+        "}\n"
+        "Generate 5-10 key tasks based on the construction project scope. "
+        "Never include explanations outside the JSON."
+    )
+
+    human_prompt = (
+        f"Document filename: {filename}\n"
+        "Analyze the construction project described in the following PDF text and "
+        "generate a list of key tasks required to complete the project.\n"
+        "Document excerpt:\n"
+        "<<BEGIN DOCUMENT>>\n"
+        f"{truncated_text}\n"
+        "<<END DOCUMENT>>"
+    )
+
+    try:
+        llm_response = chat_llm.invoke(
+            [SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)]
+        )
+        raw_content = getattr(llm_response, "content", str(llm_response))
+    except Exception as llm_error:
+        print(f"Task generation LLM error: {llm_error}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate task list: {llm_error}",
+        )
+
+    cleaned_content = clean_ai_response(raw_content)
+    try:
+        structured_payload = extract_json_block(cleaned_content)
+        tasks_data = structured_payload.get("tasks", [])
+        generated_tasks = [GeneratedTaskDetails(**task) for task in tasks_data]
+    except Exception as parsing_error:
+        print(f"Task generation parsing error: {parsing_error}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Unable to parse AI response into task data: {parsing_error}",
+        )
+
+    created_tasks: Optional[List[Schedule]] = None
+    persisted = False
+    if request.persist and request.project_id:
+        created_tasks = []
+        try:
+            for task in generated_tasks:
+                task_record = Schedule(
+                    project_id=request.project_id,
+                    task_name=task.task_name,
+                    start_date=task.start_date,
+                    end_date=task.end_date,
+                    status=task.status,
+                )
+                insertion = (
+                    supabase_client.table("schedules")
+                    .insert(task_record.dict(exclude={"id"}, exclude_none=True))
+                    .execute()
+                )
+                if insertion.data:
+                    created_tasks.append(Schedule(**insertion.data[0]))
+            persisted = True
+        except Exception as insert_error:
+            print(f"Task persistence error: {insert_error}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to persist generated tasks: {insert_error}",
+            )
+
+    return GenerateTasksResponse(
+        source_filename=filename,
+        tasks=generated_tasks,
+        raw_response=cleaned_content,
+        persisted=persisted,
+        created_tasks=created_tasks,
     )
 
 
