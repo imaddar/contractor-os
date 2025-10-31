@@ -35,6 +35,30 @@ export interface GenerateProjectResponse {
   created_project?: Project;
 }
 
+export interface GeneratedTaskDetails {
+  task_name: string;
+  description?: string;
+  start_date?: string;
+  end_date?: string;
+  status: string;
+}
+
+export interface GenerateTasksResponse {
+  source_filename: string;
+  tasks: GeneratedTaskDetails[];
+  raw_response?: string;
+  persisted: boolean;
+  created_tasks?: Array<{
+    id?: number;
+    project_id: number;
+    task_name: string;
+    start_date?: string;
+    end_date?: string;
+    assigned_to?: number;
+    status: string;
+  }>;
+}
+
 export const documentsApi = {
   async getAll(): Promise<Document[]> {
     const response = await fetch(`${API_BASE_URL}/documents`);
@@ -113,12 +137,40 @@ export const documentsApi = {
     return response.json();
   },
 
+  async generateTasksFromDocument(
+    filename: string,
+    persist = false,
+    projectId?: number
+  ): Promise<GenerateTasksResponse> {
+    if (!filename || filename === 'Unknown') {
+      throw new Error('Invalid filename');
+    }
+
+    const response = await fetch(
+      `${API_BASE_URL}/documents/${encodeURIComponent(filename)}/generate-tasks`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ persist, project_id: projectId }),
+      }
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || 'Failed to generate tasks from document');
+    }
+
+    return response.json();
+  },
+
   // Legacy methods for backward compatibility
-  async getById(id: number): Promise<Document> {
+  async getById(): Promise<Document> {
     throw new Error('getById is deprecated - use getByFilename instead');
   },
 
-  async delete(id: number): Promise<void> {
+  async delete(): Promise<void> {
     throw new Error('delete is deprecated - use deleteByFilename instead');
   },
 };
