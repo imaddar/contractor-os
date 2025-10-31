@@ -82,9 +82,11 @@ const Projects: React.FC = () => {
       setShowDeleteModal(false);
       setDeletingProject(null);
       setError(null);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error deleting project:', err);
-      setError(err.message || 'Failed to delete project');
+      const message =
+        err instanceof Error ? err.message : 'Failed to delete project';
+      setError(message);
       // Keep modal open to show error
     } finally {
       setIsSubmitting(false);

@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   documentsApi,
   type Document,
   type GeneratedProjectDetails,
 } from "../api/documents";
 import { projectsApi, type Project } from "../api/projects";
+import type { Schedule } from "../api/schedules";
 import DeleteModal from "../components/DeleteModal";
 import { Icon } from "../components/Icon";
 
@@ -28,6 +29,19 @@ function getOrCreateThreadId(): string {
   return newId;
 }
 
+type ProgressStatus = "pending" | "in-progress" | "completed" | "error";
+
+interface ProgressStepState {
+  id: string;
+  label: string;
+  status: ProgressStatus;
+}
+
+interface ThinkingLine {
+  id: string;
+  text: string;
+}
+
 function ConstructIQ() {
   const [uploadedFiles, setUploadedFiles] = useState<Document[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -41,22 +55,44 @@ function ConstructIQ() {
     null,
   );
   const [isDeleting, setIsDeleting] = useState(false);
-  const [generatingProjectFor, setGeneratingProjectFor] = useState<
-    string | null
-  >(null);
-  const [projectGenerationMessage, setProjectGenerationMessage] = useState<
-    string | null
-  >(null);
-  const [projectGenerationError, setProjectGenerationError] = useState<
-    string | null
-  >(null);
-  const [lastGeneratedProject, setLastGeneratedProject] =
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [generationModalOpen, setGenerationModalOpen] = useState(false);
+  const [selectedGenerationDocument, setSelectedGenerationDocument] =
+    useState("");
+  const [selectedGenerationProjects, setSelectedGenerationProjects] = useState<
+    string[]
+  >([]);
+  const [shouldGenerateProject, setShouldGenerateProject] = useState(true);
+  const [shouldGenerateTasks, setShouldGenerateTasks] = useState(true);
+  const [generationMaxTasks, setGenerationMaxTasks] = useState(8);
+  const [progressModalOpen, setProgressModalOpen] = useState(false);
+  const [progressSteps, setProgressSteps] = useState<ProgressStepState[]>([]);
+  const [generationComplete, setGenerationComplete] = useState(false);
+  const [thinkingFeed, setThinkingFeed] = useState<ThinkingLine[]>([]);
+  const thinkingTimeoutsRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
+  const thinkingSequencesRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
+  const [generationError, setGenerationError] = useState<string | null>(null);
+  const [generationSuccess, setGenerationSuccess] = useState<string | null>(
+    null,
+  );
+  const [latestGeneratedProject, setLatestGeneratedProject] =
     useState<GeneratedProjectDetails | null>(null);
-  const [lastGeneratedProjectSource, setLastGeneratedProjectSource] = useState<
+  const [latestGeneratedProjectRecord, setLatestGeneratedProjectRecord] =
+    useState<Project | null>(null);
+  const [latestGeneratedTasks, setLatestGeneratedTasks] = useState<
+    Array<{
+      projectId: number;
+      projectName: string;
+      tasks: Schedule[];
+      document: string;
+    }>
+  >([]);
+  const [generatedProjectDocs, setGeneratedProjectDocs] = useState<string[]>(
+    [],
+  );
+  const [lastGenerationDocument, setLastGenerationDocument] = useState<
     string | null
   >(null);
-  const [lastGeneratedCreatedProject, setLastGeneratedCreatedProject] =
-    useState<Project | null>(null);
 
   // Chat-related state
   const [chatMessages, setChatMessages] = useState<
@@ -85,7 +121,83 @@ function ConstructIQ() {
     fetchDocuments();
     fetchChatHistory();
     fetchConversations();
+    fetchProjects();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    try {
+      const storedDocs = localStorage.getItem("constructiq_generated_projects");
+      if (storedDocs) {
+        const parsed = JSON.parse(storedDocs);
+        if (Array.isArray(parsed)) {
+          const sanitized = parsed.filter(
+            (item): item is string => typeof item === "string" && item.length > 0,
+          );
+          if (sanitized.length > 0) {
+            setGeneratedProjectDocs(sanitized);
+          }
+        }
+      }
+    } catch (storageError) {
+      console.warn("Failed to restore generated project docs:", storageError);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!selectedGenerationDocument && uploadedFiles.length > 0) {
+      const firstValid = uploadedFiles.find(
+        (doc) => doc.filename && doc.filename !== "Unknown",
+      );
+      if (firstValid?.filename) {
+        setSelectedGenerationDocument(firstValid.filename);
+      }
+    }
+  }, [uploadedFiles, selectedGenerationDocument]);
+
+  useEffect(() => {
+    if (projects.length === 0) {
+      return;
+    }
+    setSelectedGenerationProjects((previous) => {
+      const validIds = previous.filter((id) =>
+        projects.some((project) => project.id?.toString() === id),
+      );
+      if (validIds.length > 0) {
+        return validIds;
+      }
+      const firstProject = projects.find((project) => project.id);
+      return firstProject?.id ? [firstProject.id.toString()] : [];
+    });
+  }, [projects]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      "constructiq_generated_projects",
+      JSON.stringify(generatedProjectDocs),
+    );
+  }, [generatedProjectDocs]);
+
+  useEffect(() => {
+    if (
+      selectedGenerationDocument &&
+      generatedProjectDocs.includes(selectedGenerationDocument)
+    ) {
+      setShouldGenerateProject(false);
+    }
+  }, [selectedGenerationDocument, generatedProjectDocs]);
+
+  useEffect(() => {
+    return () => {
+      thinkingTimeoutsRef.current.forEach((timerId) =>
+        window.clearTimeout(timerId),
+      );
+      thinkingSequencesRef.current.forEach((timerId) =>
+        window.clearTimeout(timerId),
+      );
+      thinkingTimeoutsRef.current = [];
+      thinkingSequencesRef.current = [];
+    };
   }, []);
 
   const fetchDocuments = async () => {
@@ -184,6 +296,100 @@ function ConstructIQ() {
     }
   };
 
+  const fetchProjects = async () => {
+    try {
+      const projectList = await projectsApi.getAll();
+      setProjects(projectList);
+    } catch (err) {
+      console.error("Error fetching projects:", err);
+    }
+  };
+
+  const clearThinkingTimers = useCallback(() => {
+    thinkingSequencesRef.current.forEach((timerId) =>
+      window.clearTimeout(timerId),
+    );
+    thinkingSequencesRef.current = [];
+    thinkingTimeoutsRef.current.forEach((timerId) => window.clearTimeout(timerId));
+    thinkingTimeoutsRef.current = [];
+  }, []);
+
+  const enqueueThinking = useCallback(
+    (text: string) => {
+      if (!text) return;
+      const id = generateUUID();
+      setThinkingFeed((previous) => [...previous, { id, text }]);
+      const timeoutId = window.setTimeout(() => {
+        setThinkingFeed((prev) => prev.filter((line) => line.id !== id));
+        thinkingTimeoutsRef.current = thinkingTimeoutsRef.current.filter(
+          (storedId) => storedId !== timeoutId,
+        );
+      }, 4000);
+      thinkingTimeoutsRef.current.push(timeoutId);
+    },
+    [setThinkingFeed],
+  );
+
+  const enqueueThinkingSequence = useCallback(
+    (messages: string[], spacingMs = 1400) => {
+      clearThinkingTimers();
+      messages.forEach((message, index) => {
+        const timerId = window.setTimeout(() => {
+          enqueueThinking(message);
+        }, index * spacingMs);
+        thinkingSequencesRef.current.push(timerId);
+      });
+    },
+    [clearThinkingTimers, enqueueThinking],
+  );
+
+  const extractThinkingSnippets = (text: string) => {
+    if (!text) return [];
+    const normalized = text.replace(/\s+/g, " ").trim();
+    if (!normalized) return [];
+    const sentenceSplit = normalized
+      .split(/(?<=[.?!])\s+/)
+      .map((segment) => segment.trim())
+      .filter((segment) => segment && segment.length > 3);
+    if (sentenceSplit.length > 0) {
+      return sentenceSplit.slice(0, 4);
+    }
+    const fallback = normalized
+      .split(",")
+      .map((segment) => segment.trim())
+      .filter((segment) => segment.length > 3);
+    return fallback.slice(0, 4);
+  };
+
+  const updateProgressStep = useCallback(
+    (stepId: string, status: ProgressStatus) => {
+      setProgressSteps((previous) =>
+        previous.map((step) =>
+          step.id === stepId ? { ...step, status } : step,
+        ),
+      );
+    },
+    [],
+  );
+
+  const addGeneratedProjectDoc = useCallback((filename: string) => {
+    if (!filename) return;
+    setGeneratedProjectDocs((previous) => {
+      if (previous.includes(filename)) {
+        return previous;
+      }
+      return [...previous, filename];
+    });
+  }, []);
+
+  const resetGenerationResults = useCallback(() => {
+    setLatestGeneratedProject(null);
+    setLatestGeneratedProjectRecord(null);
+    setLatestGeneratedTasks([]);
+    setGenerationError(null);
+    setLastGenerationDocument(null);
+  }, []);
+
   const loadConversation = async (conversationId: string) => {
     setThreadId(conversationId);
     localStorage.setItem("constructiq_thread_id", conversationId);
@@ -254,6 +460,9 @@ function ConstructIQ() {
       setUploadedFiles((prev) =>
         prev.filter((d) => d.filename !== deletingDocument.filename),
       );
+      setGeneratedProjectDocs((prev) =>
+        prev.filter((name) => name !== deletingDocument.filename),
+      );
       if (selectedDocument?.filename === deletingDocument.filename) {
         setSelectedDocument(null);
       }
@@ -304,68 +513,239 @@ function ConstructIQ() {
     setSelectedDocument(null);
   };
 
-  const handleGenerateProject = async (doc: Document) => {
-    if (!doc.filename || doc.filename === "Unknown") {
-      setProjectGenerationError(
-        "Cannot generate a project for a document without a valid filename.",
-      );
+  const openGenerationModal = () => {
+    if (!hasValidDocuments || !hasSelectableProjects) {
+      return;
+    }
+    setGenerationError(null);
+    setGenerationSuccess(null);
+    const defaultDocument = selectedGenerationDocument
+      ? selectedGenerationDocument
+      : uploadedFiles.find((doc) => doc.filename && doc.filename !== "Unknown")
+          ?.filename || "";
+    setSelectedGenerationDocument(defaultDocument);
+
+    const validProjectIds = projects
+      .filter((project) => project.id)
+      .map((project) => project.id!.toString());
+    setSelectedGenerationProjects((previous) => {
+      if (previous.length > 0) {
+        const filtered = previous.filter((value) => validProjectIds.includes(value));
+        if (filtered.length > 0) {
+          return filtered;
+        }
+      }
+      return validProjectIds.slice(0, 1);
+    });
+
+    const docAlreadyGenerated = generatedProjectDocs.includes(defaultDocument);
+    setShouldGenerateProject(!docAlreadyGenerated);
+    setShouldGenerateTasks(true);
+    setGenerationMaxTasks(8);
+    setGenerationModalOpen(true);
+  };
+
+  const closeGenerationModal = () => {
+    if (progressModalOpen && !generationComplete) {
+      return;
+    }
+    setGenerationModalOpen(false);
+    setGenerationError(null);
+  };
+
+  const closeProgressModal = () => {
+    if (!generationComplete) return;
+    setProgressModalOpen(false);
+    clearThinkingTimers();
+    setThinkingFeed([]);
+    thinkingTimeoutsRef.current.forEach((timerId) => window.clearTimeout(timerId));
+    thinkingTimeoutsRef.current = [];
+  };
+
+  const handleGenerationSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!selectedGenerationDocument) {
+      setGenerationError("Select a document to continue.");
       return;
     }
 
-    setProjectGenerationError(null);
-    setProjectGenerationMessage(null);
-    setLastGeneratedProject(null);
-    setLastGeneratedCreatedProject(null);
-    setLastGeneratedProjectSource(null);
-    setGeneratingProjectFor(doc.filename);
+    if (!shouldGenerateProject && !shouldGenerateTasks) {
+      setGenerationError("Choose at least one generation option.");
+      return;
+    }
+
+    if (shouldGenerateTasks && selectedGenerationProjects.length === 0) {
+      setGenerationError("Select at least one project to generate tasks for.");
+      return;
+    }
+
+    resetGenerationResults();
+    setGenerationModalOpen(false);
+    setProgressModalOpen(true);
+    setGenerationComplete(false);
+    setThinkingFeed([]);
+    clearThinkingTimers();
+    setProgressSteps(() => {
+      const baseSteps: ProgressStepState[] = [
+        {
+          id: "context",
+          label: "Preparing document context",
+          status: "in-progress",
+        },
+      ];
+      if (shouldGenerateProject) {
+        baseSteps.push({
+          id: "project",
+          label: "Generating project brief",
+          status: "pending",
+        });
+      }
+      if (shouldGenerateTasks) {
+        selectedGenerationProjects.forEach((projectId) => {
+          const projectName =
+            projects.find((project) => project.id?.toString() === projectId)?.name ||
+            "Selected project";
+          baseSteps.push({
+            id: `tasks-${projectId}`,
+            label: `Generating tasks for ${projectName}`,
+            status: "pending",
+          });
+        });
+      }
+      return baseSteps;
+    });
 
     try {
-      const generation = await documentsApi.generateProjectFromDocument(
-        doc.filename,
-        true,
+      updateProgressStep("context", "completed");
+
+      if (shouldGenerateProject) {
+        updateProgressStep("project", "in-progress");
+        const projectResponse = await documentsApi.generateProjectFromDocument(
+          selectedGenerationDocument,
+          true,
+        );
+
+        setLatestGeneratedProject(projectResponse.project);
+        if (projectResponse.created_project) {
+          setLatestGeneratedProjectRecord(projectResponse.created_project);
+        } else if (!projectResponse.persisted) {
+          const fallbackPayload: Omit<Project, "id"> = {
+            name: projectResponse.project.name,
+            description: projectResponse.project.description,
+            address: projectResponse.project.address || undefined,
+            status: "planning",
+            start_date: projectResponse.project.start_date || undefined,
+            end_date: projectResponse.project.end_date || undefined,
+            budget: projectResponse.project.budget_estimate ?? undefined,
+          };
+          try {
+            const created = await projectsApi.create(fallbackPayload);
+            setLatestGeneratedProjectRecord(created);
+          } catch (creationError) {
+            console.error("Fallback project creation failed:", creationError);
+          }
+        }
+        addGeneratedProjectDoc(selectedGenerationDocument);
+
+        const snippetSources = [
+          ...(projectResponse.raw_response
+            ? extractThinkingSnippets(projectResponse.raw_response)
+            : []),
+        ];
+        if (snippetSources.length > 0) {
+          enqueueThinkingSequence(snippetSources);
+        } else {
+          enqueueThinkingSequence([
+            "Drafting project summary...",
+            "Reviewing timeline assumptions...",
+          ]);
+        }
+
+        updateProgressStep("project", "completed");
+      }
+
+      if (shouldGenerateTasks) {
+        const taskResults: Array<{
+          projectId: number;
+          projectName: string;
+          tasks: Schedule[];
+          document: string;
+        }> = [];
+
+        for (const projectIdString of selectedGenerationProjects) {
+          const projectId = parseInt(projectIdString, 10);
+          if (!Number.isFinite(projectId)) continue;
+          const projectName =
+            projects.find((project) => project.id === projectId)?.name ||
+            "Selected project";
+          updateProgressStep(`tasks-${projectIdString}`, "in-progress");
+
+          const taskResponse = await documentsApi.generateTasksFromDocument(
+            selectedGenerationDocument,
+            projectId,
+            { maxTasks: generationMaxTasks, persist: true },
+          );
+
+          taskResults.push({
+            projectId,
+            projectName,
+            tasks: taskResponse.tasks,
+            document: selectedGenerationDocument,
+          });
+
+          const snippets = [
+            ...(taskResponse.thinking_log || []),
+            ...(taskResponse.raw_response
+              ? extractThinkingSnippets(taskResponse.raw_response)
+              : []),
+          ].filter((line, index, array) => line && array.indexOf(line) === index);
+          if (snippets.length > 0) {
+            enqueueThinkingSequence(snippets);
+          } else {
+            enqueueThinkingSequence([
+              `Reviewing milestones for ${projectName}...`,
+              "Summarizing task breakdown...",
+            ]);
+          }
+
+          updateProgressStep(`tasks-${projectIdString}`, "completed");
+        }
+
+        setLatestGeneratedTasks(taskResults);
+      }
+
+      setGenerationComplete(true);
+      const docLabel = selectedGenerationDocument;
+      setLastGenerationDocument(docLabel);
+      const projectCount = shouldGenerateProject ? 1 : 0;
+      const taskProjectCount = shouldGenerateTasks
+        ? selectedGenerationProjects.length
+        : 0;
+
+      const summaryParts = [];
+      if (projectCount > 0) {
+        summaryParts.push("project brief");
+      }
+      if (taskProjectCount > 0) {
+        summaryParts.push(
+          `${taskProjectCount} task set${taskProjectCount === 1 ? "" : "s"}`,
+        );
+      }
+      const summary = summaryParts.join(" and ");
+      setGenerationSuccess(
+        `Generated ${summary} from ${docLabel}. Review schedules to accept proposed items.`,
       );
-
-      setLastGeneratedProject(generation.project);
-      setLastGeneratedProjectSource(doc.filename);
-
-      let createdProject: Project | null =
-        generation.created_project ?? null;
-
-      if (!generation.persisted && !createdProject) {
-        const fallbackProjectPayload = {
-          name: generation.project.name,
-          description: generation.project.description,
-          address: generation.project.address || undefined,
-          status: "planning",
-          start_date: generation.project.start_date || undefined,
-          end_date: generation.project.end_date || undefined,
-          budget: generation.project.budget_estimate ?? undefined,
-        };
-        createdProject = await projectsApi.create(fallbackProjectPayload);
-      }
-
-      if (createdProject) {
-        setLastGeneratedCreatedProject(createdProject);
-        setProjectGenerationMessage(
-          `Autogenerated project "${createdProject.name}" from ${doc.filename}.`,
-        );
-      } else {
-        setProjectGenerationMessage(
-          `Draft project "${generation.project.name}" generated from ${doc.filename}.`,
-        );
-      }
     } catch (err) {
-      console.error("Project generation error:", err);
+      console.error("Generation error:", err);
+      setGenerationComplete(true);
       const message =
-        err instanceof Error
-          ? err.message
-          : "Failed to generate project from document";
-      setProjectGenerationError(message);
-      setLastGeneratedProject(null);
-      setLastGeneratedCreatedProject(null);
-      setLastGeneratedProjectSource(null);
-    } finally {
-      setGeneratingProjectFor(null);
+        err instanceof Error ? err.message : "Failed to complete generation.";
+      setGenerationError(message);
+      setProgressSteps((previous) =>
+        previous.map((step) =>
+          step.status === "in-progress" ? { ...step, status: "error" } : step,
+        ),
+      );
     }
   };
 
@@ -472,6 +852,11 @@ function ConstructIQ() {
     }
   };
 
+  const hasValidDocuments = uploadedFiles.some(
+    (doc) => doc.filename && doc.filename !== "Unknown",
+  );
+  const hasSelectableProjects = projects.some((project) => project.id);
+
   if (isLoading) {
     return (
       <div className="page-content">
@@ -491,10 +876,32 @@ function ConstructIQ() {
   return (
     <div className="page-content">
       <div className="page-header">
-        <h1>ConstructIQ</h1>
-        <p className="dashboard-subtitle">
-          AI-powered document processing and construction intelligence
-        </p>
+        <div>
+          <h1>ConstructIQ</h1>
+          <p className="dashboard-subtitle">
+            AI-powered document processing and construction intelligence
+          </p>
+        </div>
+        <button
+          className="btn btn-primary"
+          onClick={openGenerationModal}
+          disabled={
+            !hasValidDocuments ||
+            !hasSelectableProjects ||
+            isUploading ||
+            isLoading
+          }
+          title={
+            !hasValidDocuments
+              ? "Upload a document to enable task auto-population"
+              : !hasSelectableProjects
+                ? "Create a project before running the AI generator"
+                : "Generate project briefs and tasks from your documents"
+          }
+        >
+          <Icon name="tasks" size={16} />
+          <span style={{ marginLeft: "0.5rem" }}>AI Auto-Populate</span>
+        </button>
       </div>
 
       <div className="constructiq-container">
@@ -717,75 +1124,121 @@ function ConstructIQ() {
 
         <div className="documents-section">
           <h3>Processed Documents</h3>
-          {projectGenerationMessage && (
+          {generationSuccess && (
             <div className="success-message" style={{ marginBottom: "1rem" }}>
-              {projectGenerationMessage}
+              {generationSuccess}
             </div>
           )}
-          {projectGenerationError && (
+          {generationError && (
             <div className="error-message" style={{ marginBottom: "1rem" }}>
-              {projectGenerationError}
+              {generationError}
             </div>
           )}
-          {lastGeneratedProject && (
+          {latestGeneratedProject && (
             <div className="generated-project-card">
               <div className="generated-project-title">
-                <h4>{lastGeneratedProject.name}</h4>
-                {lastGeneratedProject.confidence && (
+                <h4>{latestGeneratedProject.name}</h4>
+                {latestGeneratedProject.confidence && (
                   <span className="confidence-tag">
-                    {lastGeneratedProject.confidence}
+                    {latestGeneratedProject.confidence}
                   </span>
                 )}
               </div>
-              {lastGeneratedProjectSource && (
+              {(lastGenerationDocument || selectedGenerationDocument) && (
                 <p className="generated-project-source">
-                  Created from: {lastGeneratedProjectSource}
+                  Generated from: {lastGenerationDocument || selectedGenerationDocument}
                 </p>
               )}
               <p className="generated-project-description">
-                {lastGeneratedProject.description}
+                {latestGeneratedProject.description}
               </p>
               <div className="generated-project-details">
                 <div>
                   <strong>Address:</strong>{" "}
-                  {lastGeneratedProject.address || "Not specified"}
+                  {latestGeneratedProject.address || "Not specified"}
                 </div>
                 <div>
                   <strong>Start Date:</strong>{" "}
-                  {lastGeneratedProject.start_date || "TBD"}
+                  {latestGeneratedProject.start_date || "TBD"}
                 </div>
                 <div>
                   <strong>End Date:</strong>{" "}
-                  {lastGeneratedProject.end_date || "TBD"}
+                  {latestGeneratedProject.end_date || "TBD"}
                 </div>
                 <div>
                   <strong>Budget:</strong>{" "}
-                  {typeof lastGeneratedProject.budget_estimate === "number"
-                    ? `${lastGeneratedProject.budget_currency || "USD"} ${lastGeneratedProject.budget_estimate.toLocaleString()}`
+                  {typeof latestGeneratedProject.budget_estimate === "number"
+                    ? `${latestGeneratedProject.budget_currency || "USD"} ${latestGeneratedProject.budget_estimate.toLocaleString()}`
                     : "Estimate pending"}
                 </div>
               </div>
-              {lastGeneratedProject.assumptions && (
+              {latestGeneratedProject.assumptions && (
                 <div className="generated-project-assumptions">
                   <strong>Assumptions:</strong>
                   <ul>
-                    {lastGeneratedProject.assumptions.map((item, idx) => (
+                    {latestGeneratedProject.assumptions.map((item, idx) => (
                       <li key={idx}>{item}</li>
                     ))}
                   </ul>
                 </div>
               )}
-              {lastGeneratedProject.additional_notes && (
+              {latestGeneratedProject.additional_notes && (
                 <p className="generated-project-notes">
                   <strong>Notes:</strong>{" "}
-                  {lastGeneratedProject.additional_notes}
+                  {latestGeneratedProject.additional_notes}
                 </p>
               )}
-              {lastGeneratedCreatedProject && (
+              {latestGeneratedProjectRecord && (
                 <p className="generated-project-status">
-                  Project status: {lastGeneratedCreatedProject.status}
+                  Project status: {latestGeneratedProjectRecord.status}
                 </p>
               )}
+            </div>
+          )}
+          {latestGeneratedTasks.length > 0 && (
+            <div className="generated-tasks-preview">
+              <h4>Generated Proposed Tasks</h4>
+              <p className="preview-hint">
+                Proposed tasks are saved with status <strong>proposed</strong>.
+                Review them from the Schedule page to accept or discard.
+              </p>
+              <div className="projects-grid">
+                {latestGeneratedTasks.map((group) => (
+                  <div className="project-card" key={`generated-${group.projectId}`}>
+                    <div className="project-header">
+                      <h3>{group.projectName}</h3>
+                      <span className="status proposed">proposed</span>
+                    </div>
+                    <div className="project-details">
+                      <div className="detail">
+                        <strong>Document:</strong> {group.document}
+                      </div>
+                      <div className="detail">
+                        <strong>Tasks:</strong> {group.tasks.length}
+                      </div>
+                    </div>
+                    <ul className="task-preview-list">
+                      {group.tasks.slice(0, 4).map((task) => (
+                        <li key={`${group.projectId}-${task.task_name}`}>
+                          <span>{task.task_name}</span>
+                          <span className="date-range">
+                            {task.start_date
+                              ? new Date(task.start_date).toLocaleDateString()
+                              : "TBD"}
+                            {" "}-{" "}
+                            {task.end_date
+                              ? new Date(task.end_date).toLocaleDateString()
+                              : "TBD"}
+                          </span>
+                        </li>
+                      ))}
+                      {group.tasks.length > 4 && (
+                        <li className="more-tasks">+{group.tasks.length - 4} more</li>
+                      )}
+                    </ul>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
           {uploadedFiles.length === 0 ? (
@@ -805,9 +1258,16 @@ function ConstructIQ() {
                       </span>
                       {doc.filename}
                     </h4>
-                    <span className="upload-time">
-                      {formatDate(doc.uploaded_at)}
-                    </span>
+                    <div className="document-meta-tags">
+                      {generatedProjectDocs.includes(doc.filename) && (
+                        <span className="status-tag status-complete">
+                          Project generated
+                        </span>
+                      )}
+                      <span className="upload-time">
+                        {formatDate(doc.uploaded_at)}
+                      </span>
+                    </div>
                   </div>
                   <div className="document-metadata">
                     <p>
@@ -827,21 +1287,6 @@ function ConstructIQ() {
                     <p>{doc.content}</p>
                   </div>
                   <div className="document-actions">
-                    <button
-                      className="btn btn-small btn-secondary"
-                      onClick={() => handleGenerateProject(doc)}
-                      disabled={
-                        !doc.filename ||
-                        doc.filename === "Unknown" ||
-                        generatingProjectFor !== null
-                      }
-                    >
-                      {generatingProjectFor === doc.filename
-                        ? "Generating..."
-                        : generatingProjectFor
-                          ? "Please wait..."
-                          : "Autogenerate Project"}
-                    </button>
                     <button
                       className="btn btn-small btn-primary"
                       onClick={() => openDocument(doc)}
@@ -906,6 +1351,240 @@ function ConstructIQ() {
           </div>
         </div>
       </div>
+
+      {generationModalOpen && (
+        <div
+          className="modal-overlay"
+          onClick={() => {
+            if (!progressModalOpen) {
+              closeGenerationModal();
+            }
+          }}
+        >
+          <div
+            className="modal-content edit-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h3>
+                <span className="heading-icon">
+                  <Icon name="tasks" size={18} />
+                </span>
+                AI Project & Task Generator
+              </h3>
+              <button
+                onClick={closeGenerationModal}
+                className="modal-close"
+                aria-label="Close generation modal"
+              >
+                <Icon name="close" size={18} />
+              </button>
+            </div>
+            <form onSubmit={handleGenerationSubmit}>
+              <div className="modal-body">
+                {!hasValidDocuments || !hasSelectableProjects ? (
+                  <div className="empty-state">
+                    <p>
+                      Upload at least one document and create a project to use the AI generator.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="form-group">
+                      <label htmlFor="generation-document">Source Document *</label>
+                      <select
+                        id="generation-document"
+                        value={selectedGenerationDocument}
+                        onChange={(e) => setSelectedGenerationDocument(e.target.value)}
+                        required
+                      >
+                        {uploadedFiles
+                          .filter((doc) => doc.filename && doc.filename !== "Unknown")
+                          .map((doc) => (
+                            <option key={doc.filename} value={doc.filename}>
+                              {doc.filename}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+
+                    <div className="form-group toggle-group">
+                      <label>Generation Options</label>
+                      <div className="toggle-row">
+                        <label className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={shouldGenerateProject}
+                            onChange={(e) => setShouldGenerateProject(e.target.checked)}
+                            disabled={generatedProjectDocs.includes(selectedGenerationDocument)}
+                          />
+                          <span>Generate project brief</span>
+                        </label>
+                        {generatedProjectDocs.includes(selectedGenerationDocument) && (
+                          <span className="hint-text">Project already created for this document</span>
+                        )}
+                      </div>
+                      <div className="toggle-row">
+                        <label className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={shouldGenerateTasks}
+                            onChange={(e) => setShouldGenerateTasks(e.target.checked)}
+                          />
+                          <span>Generate tasks for selected projects</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="form-group">
+                      <label>Target Projects</label>
+                      <div className="checkbox-grid">
+                        {projects
+                          .filter((project) => project.id)
+                          .map((project) => {
+                            const projectId = project.id!.toString();
+                            const checked = selectedGenerationProjects.includes(projectId);
+                            return (
+                              <label className="checkbox-label" key={project.id}>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => {
+                                    setSelectedGenerationProjects((previous) => {
+                                      if (checked) {
+                                        return previous.filter((id) => id !== projectId);
+                                      }
+                                      return [...previous, projectId];
+                                    });
+                                  }}
+                                  disabled={!shouldGenerateTasks}
+                                />
+                                <span>{project.name}</span>
+                              </label>
+                            );
+                          })}
+                      </div>
+                      <p className="hint-text">
+                        Tasks are saved as proposed items. Accept them from the Schedule page.
+                      </p>
+                    </div>
+
+                    <div className="form-group">
+                      <label htmlFor="generation-max-tasks">
+                        Maximum tasks per project (1-20)
+                      </label>
+                      <input
+                        type="number"
+                        id="generation-max-tasks"
+                        min={1}
+                        max={20}
+                        value={generationMaxTasks}
+                        onChange={(e) => {
+                          const nextValue = parseInt(e.target.value, 10);
+                          if (Number.isNaN(nextValue)) {
+                            setGenerationMaxTasks(1);
+                          } else {
+                            setGenerationMaxTasks(Math.max(1, Math.min(20, nextValue)));
+                          }
+                        }}
+                        disabled={!shouldGenerateTasks}
+                      />
+                    </div>
+
+                    {generationError && (
+                      <div className="error-message">{generationError}</div>
+                    )}
+                  </>
+                )}
+              </div>
+              <div className="modal-actions">
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={!hasValidDocuments || !hasSelectableProjects}
+                >
+                  Start Generation
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={closeGenerationModal}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {progressModalOpen && (
+        <div className="modal-overlay" onClick={() => closeProgressModal()}>
+          <div
+            className="modal-content progress-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h3>
+                <span className="heading-icon">
+                  <Icon name="ai" size={18} />
+                </span>
+                ConstructIQ is working
+              </h3>
+              <button
+                onClick={closeProgressModal}
+                className="modal-close"
+                aria-label="Close progress"
+                disabled={!generationComplete}
+              >
+                <Icon name="close" size={18} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="progress-steps">
+                {progressSteps.map((step) => (
+                  <div
+                    key={step.id}
+                    className={`progress-step ${step.status}`}
+                  >
+                    <span className="step-indicator" />
+                    <span className="step-label">{step.label}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="thinking-feed">
+                {thinkingFeed.map((line) => (
+                  <div key={line.id} className="thinking-line">
+                    {line.text}
+                  </div>
+                ))}
+              </div>
+
+              {generationComplete && generationError && (
+                <div className="error-message" style={{ marginTop: "1rem" }}>
+                  {generationError}
+                </div>
+              )}
+              {generationComplete && generationSuccess && (
+                <div className="success-message" style={{ marginTop: "1rem" }}>
+                  {generationSuccess}
+                </div>
+              )}
+            </div>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={closeProgressModal}
+                disabled={!generationComplete}
+              >
+                {generationComplete ? "Close" : "Working..."}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Document Viewer Modal */}
       {selectedDocument && (

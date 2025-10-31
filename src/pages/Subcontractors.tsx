@@ -9,7 +9,6 @@ const Subcontractors: React.FC = () => {
   const [subcontractors, setSubcontractors] = useState<Subcontractor[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showForm, setShowForm] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [editingSubcontractor, setEditingSubcontractor] = useState<Subcontractor | null>(null);
@@ -77,9 +76,11 @@ const Subcontractors: React.FC = () => {
       setShowDeleteModal(false);
       setDeletingSubcontractor(null);
       setError(null);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error deleting subcontractor:', err);
-      setError(err.message || 'Failed to delete subcontractor');
+      const message =
+        err instanceof Error ? err.message : 'Failed to delete subcontractor';
+      setError(message);
       // Keep modal open to show error
     } finally {
       setIsSubmitting(false);
@@ -122,7 +123,6 @@ const Subcontractors: React.FC = () => {
   const resetForm = () => {
     setFormData({ name: '', contact_email: '', phone: '', specialty: '' });
     setEditingSubcontractor(null);
-    setShowForm(false);
     setShowEditModal(false);
   };
 

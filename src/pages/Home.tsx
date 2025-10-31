@@ -69,7 +69,8 @@ const Home: React.FC = () => {
         return (
           endDate >= today &&
           endDate <= nextWeek &&
-          schedule.status !== "completed"
+          schedule.status !== "completed" &&
+          schedule.status !== "proposed"
         );
       }).length;
 
