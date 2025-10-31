@@ -3,14 +3,9 @@ import {
   documentsApi,
   type Document,
   type GeneratedProjectDetails,
-  type GeneratedTaskDetails,
 } from "../api/documents";
 import { projectsApi, type Project } from "../api/projects";
 import DeleteModal from "../components/DeleteModal";
-import UnifiedAutoGenModal, {
-  type AutoGenConfig,
-} from "../components/UnifiedAutoGenModal";
-import AutoGenerationModal from "../components/AutoGenerationModal";
 import { Icon } from "../components/Icon";
 
 // Helper function to generate UUID v4
@@ -46,23 +41,22 @@ function ConstructIQ() {
     null,
   );
   const [isDeleting, setIsDeleting] = useState(false);
-  
-  // Auto-generation state
-  const [showAutoGenModal, setShowAutoGenModal] = useState(false);
-  const [showProgressModal, setShowProgressModal] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [generationProgress, setGenerationProgress] = useState<string>("");
-  const [thinkingText, setThinkingText] = useState<string>("");
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [generatingProjectFor, setGeneratingProjectFor] = useState<
+    string | null
+  >(null);
+  const [projectGenerationMessage, setProjectGenerationMessage] = useState<
+    string | null
+  >(null);
+  const [projectGenerationError, setProjectGenerationError] = useState<
+    string | null
+  >(null);
   const [lastGeneratedProject, setLastGeneratedProject] =
     useState<GeneratedProjectDetails | null>(null);
-  const [lastGeneratedTasks, setLastGeneratedTasks] = useState<
-    GeneratedTaskDetails[]
-  >([]);
-  const [generationMessage, setGenerationMessage] = useState<string | null>(
-    null,
-  );
-  const [generationError, setGenerationError] = useState<string | null>(null);
+  const [lastGeneratedProjectSource, setLastGeneratedProjectSource] = useState<
+    string | null
+  >(null);
+  const [lastGeneratedCreatedProject, setLastGeneratedCreatedProject] =
+    useState<Project | null>(null);
 
   // Chat-related state
   const [chatMessages, setChatMessages] = useState<
@@ -89,7 +83,6 @@ function ConstructIQ() {
 
   useEffect(() => {
     fetchDocuments();
-    fetchProjects();
     fetchChatHistory();
     fetchConversations();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -105,15 +98,6 @@ function ConstructIQ() {
       console.error("Error fetching documents:", err);
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const fetchProjects = async () => {
-    try {
-      const projectData = await projectsApi.getAll();
-      setProjects(projectData);
-    } catch (err) {
-      console.error("Error fetching projects:", err);
     }
   };
 
@@ -320,107 +304,68 @@ function ConstructIQ() {
     setSelectedDocument(null);
   };
 
-  const handleUnifiedGeneration = async (config: AutoGenConfig) => {
-    setShowAutoGenModal(false);
-    setShowProgressModal(true);
-    setIsGenerating(true);
-    setGenerationError(null);
-    setGenerationMessage(null);
+  const handleGenerateProject = async (doc: Document) => {
+    if (!doc.filename || doc.filename === "Unknown") {
+      setProjectGenerationError(
+        "Cannot generate a project for a document without a valid filename.",
+      );
+      return;
+    }
+
+    setProjectGenerationError(null);
+    setProjectGenerationMessage(null);
     setLastGeneratedProject(null);
-    setLastGeneratedTasks([]);
+    setLastGeneratedCreatedProject(null);
+    setLastGeneratedProjectSource(null);
+    setGeneratingProjectFor(doc.filename);
 
     try {
-      let generatedProject: Project | null = null;
-      let generatedTasksList: GeneratedTaskDetails[] = [];
+      const generation = await documentsApi.generateProjectFromDocument(
+        doc.filename,
+        true,
+      );
 
-      // Generate project if requested
-      if (config.generateProjects) {
-        setGenerationProgress("Analyzing document and generating project...");
-        setThinkingText("Reading construction document and extracting project details...");
-        
-        const projectGeneration = await documentsApi.generateProjectFromDocument(
-          config.documentFilename,
-          true,
+      setLastGeneratedProject(generation.project);
+      setLastGeneratedProjectSource(doc.filename);
+
+      let createdProject: Project | null =
+        generation.created_project ?? null;
+
+      if (!generation.persisted && !createdProject) {
+        const fallbackProjectPayload = {
+          name: generation.project.name,
+          description: generation.project.description,
+          address: generation.project.address || undefined,
+          status: "planning",
+          start_date: generation.project.start_date || undefined,
+          end_date: generation.project.end_date || undefined,
+          budget: generation.project.budget_estimate ?? undefined,
+        };
+        createdProject = await projectsApi.create(fallbackProjectPayload);
+      }
+
+      if (createdProject) {
+        setLastGeneratedCreatedProject(createdProject);
+        setProjectGenerationMessage(
+          `Autogenerated project "${createdProject.name}" from ${doc.filename}.`,
         );
-
-        setLastGeneratedProject(projectGeneration.project);
-        generatedProject = projectGeneration.created_project || null;
-
-        if (!projectGeneration.persisted && projectGeneration.project) {
-          setThinkingText("Creating project in database...");
-          const fallbackProjectPayload = {
-            name: projectGeneration.project.name,
-            description: projectGeneration.project.description,
-            address: projectGeneration.project.address || undefined,
-            status: "planning",
-            start_date: projectGeneration.project.start_date || undefined,
-            end_date: projectGeneration.project.end_date || undefined,
-            budget: projectGeneration.project.budget_estimate ?? undefined,
-          };
-          generatedProject = await projectsApi.create(fallbackProjectPayload);
-        }
-
-        await fetchProjects();
+      } else {
+        setProjectGenerationMessage(
+          `Draft project "${generation.project.name}" generated from ${doc.filename}.`,
+        );
       }
-
-      // Generate tasks if requested
-      if (config.generateTasks) {
-        setGenerationProgress("Generating tasks from document...");
-        setThinkingText("Analyzing project scope and identifying key tasks...");
-
-        // Generate tasks for each selected project, or without project if none selected
-        if (config.selectedProjectIds.length > 0) {
-          for (const projectId of config.selectedProjectIds) {
-            const taskGeneration = await documentsApi.generateTasksFromDocument(
-              config.documentFilename,
-              true,
-              projectId,
-            );
-            generatedTasksList = [...generatedTasksList, ...taskGeneration.tasks];
-          }
-        } else if (generatedProject) {
-          // If we just generated a project, assign tasks to it
-          const taskGeneration = await documentsApi.generateTasksFromDocument(
-            config.documentFilename,
-            true,
-            generatedProject.id,
-          );
-          generatedTasksList = taskGeneration.tasks;
-        } else {
-          // Generate tasks without project assignment
-          const taskGeneration = await documentsApi.generateTasksFromDocument(
-            config.documentFilename,
-            false,
-          );
-          generatedTasksList = taskGeneration.tasks;
-        }
-
-        setLastGeneratedTasks(generatedTasksList);
-      }
-
-      // Build success message
-      const messages: string[] = [];
-      if (generatedProject) {
-        messages.push(`Created project "${generatedProject.name}"`);
-      }
-      if (generatedTasksList.length > 0) {
-        messages.push(`Generated ${generatedTasksList.length} tasks`);
-      }
-      setGenerationMessage(messages.join(" and ") + ` from ${config.documentFilename}`);
-
     } catch (err) {
-      console.error("Generation error:", err);
+      console.error("Project generation error:", err);
       const message =
-        err instanceof Error ? err.message : "Failed to generate from document";
-      setGenerationError(message);
+        err instanceof Error
+          ? err.message
+          : "Failed to generate project from document";
+      setProjectGenerationError(message);
+      setLastGeneratedProject(null);
+      setLastGeneratedCreatedProject(null);
+      setLastGeneratedProjectSource(null);
     } finally {
-      setIsGenerating(false);
-      setGenerationProgress("");
-      setThinkingText("");
-      // Keep modal open for 3 seconds so user can see completion message
-      setTimeout(() => {
-        setShowProgressModal(false);
-      }, 3000);
+      setGeneratingProjectFor(null);
     }
   };
 
@@ -771,27 +716,15 @@ function ConstructIQ() {
         </div>
 
         <div className="documents-section">
-          <div className="section-header">
-            <h3>Processed Documents</h3>
-            {uploadedFiles.length > 0 && (
-              <button
-                className="btn btn-primary"
-                onClick={() => setShowAutoGenModal(true)}
-                disabled={isGenerating}
-              >
-                <Icon name="ai" size={16} />
-                Auto-Generate
-              </button>
-            )}
-          </div>
-          {generationMessage && (
+          <h3>Processed Documents</h3>
+          {projectGenerationMessage && (
             <div className="success-message" style={{ marginBottom: "1rem" }}>
-              {generationMessage}
+              {projectGenerationMessage}
             </div>
           )}
-          {generationError && (
+          {projectGenerationError && (
             <div className="error-message" style={{ marginBottom: "1rem" }}>
-              {generationError}
+              {projectGenerationError}
             </div>
           )}
           {lastGeneratedProject && (
@@ -804,6 +737,11 @@ function ConstructIQ() {
                   </span>
                 )}
               </div>
+              {lastGeneratedProjectSource && (
+                <p className="generated-project-source">
+                  Created from: {lastGeneratedProjectSource}
+                </p>
+              )}
               <p className="generated-project-description">
                 {lastGeneratedProject.description}
               </p>
@@ -843,26 +781,11 @@ function ConstructIQ() {
                   {lastGeneratedProject.additional_notes}
                 </p>
               )}
-            </div>
-          )}
-          {lastGeneratedTasks.length > 0 && (
-            <div className="generated-tasks-card">
-              <h4>Generated Tasks ({lastGeneratedTasks.length})</h4>
-              <ul className="tasks-list">
-                {lastGeneratedTasks.map((task, idx) => (
-                  <li key={idx} className="task-item">
-                    <strong>{task.task_name}</strong>
-                    {task.description && <p>{task.description}</p>}
-                    {(task.start_date || task.end_date) && (
-                      <p className="task-dates">
-                        {task.start_date && `Start: ${task.start_date}`}
-                        {task.start_date && task.end_date && " | "}
-                        {task.end_date && `End: ${task.end_date}`}
-                      </p>
-                    )}
-                  </li>
-                ))}
-              </ul>
+              {lastGeneratedCreatedProject && (
+                <p className="generated-project-status">
+                  Project status: {lastGeneratedCreatedProject.status}
+                </p>
+              )}
             </div>
           )}
           {uploadedFiles.length === 0 ? (
@@ -904,6 +827,21 @@ function ConstructIQ() {
                     <p>{doc.content}</p>
                   </div>
                   <div className="document-actions">
+                    <button
+                      className="btn btn-small btn-secondary"
+                      onClick={() => handleGenerateProject(doc)}
+                      disabled={
+                        !doc.filename ||
+                        doc.filename === "Unknown" ||
+                        generatingProjectFor !== null
+                      }
+                    >
+                      {generatingProjectFor === doc.filename
+                        ? "Generating..."
+                        : generatingProjectFor
+                          ? "Please wait..."
+                          : "Autogenerate Project"}
+                    </button>
                     <button
                       className="btn btn-small btn-primary"
                       onClick={() => openDocument(doc)}
@@ -1078,23 +1016,6 @@ function ConstructIQ() {
         onCancel={cancelDelete}
         isLoading={isDeleting}
         error={error}
-      />
-
-      <UnifiedAutoGenModal
-        isOpen={showAutoGenModal}
-        onClose={() => setShowAutoGenModal(false)}
-        onGenerate={handleUnifiedGeneration}
-        documents={uploadedFiles}
-        projects={projects}
-        isGenerating={isGenerating}
-      />
-
-      <AutoGenerationModal
-        isOpen={showProgressModal}
-        onClose={() => setShowProgressModal(false)}
-        isGenerating={isGenerating}
-        thinkingText={thinkingText}
-        progress={generationProgress}
       />
     </div>
   );
