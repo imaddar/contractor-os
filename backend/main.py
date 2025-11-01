@@ -1185,7 +1185,7 @@ async def generate_tasks_from_document(
         "    }\n"
         "  ]\n"
         "}\n"
-        "Keep the task list practical for field execution. "
+        "Keep the task list practical for field execution, and make the tasks concrete and actionable; avoid vague tasks but rather more specific."
         "Limit to the most critical phases, up to the provided max task count. "
         "Only set dates when the document provides clear sequencing information; otherwise use null. "
         "Never include commentary outside the JSON."

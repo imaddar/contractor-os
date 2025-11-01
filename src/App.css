@@ -627,58 +627,82 @@ button {
     gap: 2rem;
 }
 
-.upload-area {
-    margin-top: 1rem;
+.action-button-row {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
 }
 
-.upload-button {
-    width: 100%;
+.action-button-row .btn {
     display: inline-flex;
     align-items: center;
+    gap: 0.4rem;
+    min-width: 160px;
     justify-content: center;
-    gap: 0.6rem;
-    border-radius: var(--radius-md);
-    padding: 0.9rem;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid var(--border-subtle);
-    cursor: pointer;
-    transition:
-        background 160ms ease,
-        border-color 160ms ease,
-        transform 160ms ease;
 }
 
-.upload-button:hover {
-    background: rgba(75, 142, 246, 0.12);
-    border-color: rgba(75, 142, 246, 0.36);
-    transform: translateY(-1px);
-}
-
-.upload-button.uploading {
-    cursor: wait;
-    color: var(--text-muted);
-}
-
-.upload-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--accent);
+.action-button-row .btn[disabled] {
+    cursor: not-allowed;
+    opacity: 0.6;
 }
 
 .documents-section,
-.features-section,
 .chat-section {
     display: flex;
     flex-direction: column;
     gap: 1.25rem;
 }
 
-.documents-section h3,
-.features-section h3 {
+.documents-section h3 {
     margin: 0;
     font-size: 1.2rem;
     font-weight: 600;
+}
+
+.page-subtitle-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.info-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-soft);
+    cursor: pointer;
+    transition:
+        background 160ms ease,
+        border-color 160ms ease;
+}
+
+.info-button:hover {
+    background: rgba(75, 142, 246, 0.15);
+    border-color: rgba(75, 142, 246, 0.4);
+    color: var(--text-primary);
+}
+
+.info-popover {
+    margin-top: 0.75rem;
+    padding: 1rem;
+    border-radius: var(--radius-md);
+    border: 1px solid rgba(75, 142, 246, 0.28);
+    background: rgba(75, 142, 246, 0.08);
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    max-width: 520px;
+}
+
+.info-popover ul {
+    margin: 0.6rem 0 0 1.1rem;
+    padding: 0;
+    color: var(--text-soft);
 }
 
 .document-meta-tags {

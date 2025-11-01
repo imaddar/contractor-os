@@ -93,6 +93,8 @@ function ConstructIQ() {
   const [lastGenerationDocument, setLastGenerationDocument] = useState<
     string | null
   >(null);
+  const [showFeatureInfo, setShowFeatureInfo] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Chat-related state
   const [chatMessages, setChatMessages] = useState<
@@ -387,6 +389,7 @@ function ConstructIQ() {
     setLatestGeneratedProjectRecord(null);
     setLatestGeneratedTasks([]);
     setGenerationError(null);
+    setGenerationSuccess(null);
     setLastGenerationDocument(null);
   }, []);
 
@@ -513,16 +516,31 @@ function ConstructIQ() {
     setSelectedDocument(null);
   };
 
-  const openGenerationModal = () => {
+  const openGenerationModal = (mode: "project" | "tasks" | "both" = "both") => {
     if (!hasValidDocuments || !hasSelectableProjects) {
       return;
     }
     setGenerationError(null);
     setGenerationSuccess(null);
-    const defaultDocument = selectedGenerationDocument
+    let defaultDocument = selectedGenerationDocument
       ? selectedGenerationDocument
       : uploadedFiles.find((doc) => doc.filename && doc.filename !== "Unknown")
           ?.filename || "";
+    if (
+      mode === "project" &&
+      defaultDocument &&
+      generatedProjectDocs.includes(defaultDocument)
+    ) {
+      const nextDoc = uploadedFiles.find(
+        (doc) =>
+          doc.filename &&
+          doc.filename !== "Unknown" &&
+          !generatedProjectDocs.includes(doc.filename),
+      );
+      if (nextDoc?.filename) {
+        defaultDocument = nextDoc.filename;
+      }
+    }
     setSelectedGenerationDocument(defaultDocument);
 
     const validProjectIds = projects
@@ -538,9 +556,19 @@ function ConstructIQ() {
       return validProjectIds.slice(0, 1);
     });
 
-    const docAlreadyGenerated = generatedProjectDocs.includes(defaultDocument);
-    setShouldGenerateProject(!docAlreadyGenerated);
-    setShouldGenerateTasks(true);
+    const docAlreadyGenerated =
+      defaultDocument !== "" &&
+      generatedProjectDocs.includes(defaultDocument);
+    if (mode === "project") {
+      setShouldGenerateProject(!docAlreadyGenerated);
+      setShouldGenerateTasks(false);
+    } else if (mode === "tasks") {
+      setShouldGenerateProject(false);
+      setShouldGenerateTasks(true);
+    } else {
+      setShouldGenerateProject(!docAlreadyGenerated);
+      setShouldGenerateTasks(true);
+    }
     setGenerationMaxTasks(8);
     setGenerationModalOpen(true);
   };
@@ -873,18 +901,53 @@ function ConstructIQ() {
     );
   }
 
+  const handleUploadButtonClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
   return (
     <div className="page-content">
       <div className="page-header">
         <div>
           <h1>ConstructIQ</h1>
-          <p className="dashboard-subtitle">
-            AI-powered document processing and construction intelligence
-          </p>
+          <div className="page-subtitle-row">
+            <p className="dashboard-subtitle">
+              AI-powered document processing and construction intelligence
+            </p>
+            <button
+              type="button"
+              className="info-button"
+              onClick={() => setShowFeatureInfo((prev) => !prev)}
+              aria-label="Show ConstructIQ capabilities"
+            >
+              <Icon name="info" size={16} />
+            </button>
+          </div>
+          {showFeatureInfo && (
+            <div className="info-popover">
+              <p>
+                ConstructIQ helps you analyze construction documents, generate project briefs,
+                and auto-populate schedule tasks with AI assistance.
+              </p>
+              <ul>
+                <li>
+                  <strong>Intelligent chat:</strong> ask questions about your plans and files.
+                </li>
+                <li>
+                  <strong>Document analysis:</strong> upload PDFs and keep them searchable.
+                </li>
+                <li>
+                  <strong>Construction expertise:</strong> get schedule, budget, and scope guidance.
+                </li>
+              </ul>
+            </div>
+          )}
         </div>
         <button
           className="btn btn-primary"
-          onClick={openGenerationModal}
+          onClick={() => openGenerationModal("both")}
           disabled={
             !hasValidDocuments ||
             !hasSelectableProjects ||
@@ -893,71 +956,18 @@ function ConstructIQ() {
           }
           title={
             !hasValidDocuments
-              ? "Upload a document to enable task auto-population"
+              ? "Upload a document to enable the AI generator"
               : !hasSelectableProjects
                 ? "Create a project before running the AI generator"
                 : "Generate project briefs and tasks from your documents"
           }
         >
           <Icon name="tasks" size={16} />
-          <span style={{ marginLeft: "0.5rem" }}>AI Auto-Populate</span>
+          <span style={{ marginLeft: "0.5rem" }}>Run Full Generation</span>
         </button>
       </div>
 
       <div className="constructiq-container">
-        <div className="upload-section">
-          <div className="upload-card">
-            <h2>
-              <span className="heading-icon">
-                <Icon name="document" size={20} />
-              </span>
-              Document Parser
-            </h2>
-            <p>
-              Upload PDF documents to extract and analyze their content using
-              AI. Documents are automatically chunked and stored for intelligent
-              analysis.
-            </p>
-
-            <div className="upload-area">
-              <input
-                type="file"
-                id="file-upload"
-                accept=".pdf"
-                onChange={handleFileUpload}
-                disabled={isUploading}
-                style={{ display: "none" }}
-              />
-              <label
-                htmlFor="file-upload"
-                className={`upload-button ${isUploading ? "uploading" : ""}`}
-              >
-                {isUploading ? (
-                  <>
-                    <span className="upload-icon">
-                      <Icon name="clock" size={18} />
-                    </span>
-                    Processing & Chunking...
-                  </>
-                ) : (
-                  <>
-                    <span className="upload-icon">
-                      <Icon name="upload" size={18} />
-                    </span>
-                    Upload PDF Document
-                  </>
-                )}
-              </label>
-            </div>
-
-            {error && !showDeleteModal && (
-              <div className="error-message" style={{ marginTop: "1rem" }}>
-                {error}
-              </div>
-            )}
-          </div>
-        </div>
-
         {/* AI Chat Section */}
         <div className="chat-section">
           <div className="upload-card">
@@ -1121,6 +1131,60 @@ function ConstructIQ() {
             </div>
           </div>
         </div>
+
+        <input
+          type="file"
+          ref={fileInputRef}
+          accept=".pdf"
+          onChange={handleFileUpload}
+          disabled={isUploading}
+          style={{ display: "none" }}
+        />
+
+        <div className="action-button-row">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={handleUploadButtonClick}
+            disabled={isUploading}
+          >
+            <Icon name="upload" size={16} />
+            <span>{isUploading ? "Uploading..." : "Upload PDF"}</span>
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => openGenerationModal("project")}
+            disabled={
+              !hasValidDocuments ||
+              isLoading ||
+              isUploading
+            }
+          >
+            <Icon name="projects" size={16} />
+            <span>Generate Project</span>
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => openGenerationModal("tasks")}
+            disabled={
+              !hasValidDocuments ||
+              !hasSelectableProjects ||
+              isLoading ||
+              isUploading
+            }
+          >
+            <Icon name="tasks" size={16} />
+            <span>Generate Tasks</span>
+          </button>
+        </div>
+
+        {error && !showDeleteModal && (
+          <div className="error-message" style={{ marginBottom: "1rem" }}>
+            {error}
+          </div>
+        )}
 
         <div className="documents-section">
           <h3>Processed Documents</h3>
@@ -1308,48 +1372,6 @@ function ConstructIQ() {
           )}
         </div>
 
-        <div className="features-section">
-          <h3>AI-Powered Features</h3>
-          <div className="features-grid">
-            <div className="feature-card">
-              <h4>
-                <span className="heading-icon">
-                  <Icon name="ai" size={16} />
-                </span>
-                Intelligent Chat
-              </h4>
-              <p>
-                Conversational AI that understands construction context and can
-                analyze your uploaded documents. Chat history is automatically
-                saved.
-              </p>
-            </div>
-            <div className="feature-card">
-              <h4>
-                <span className="heading-icon">
-                  <Icon name="projects" size={16} />
-                </span>
-                Document Analysis
-              </h4>
-              <p>
-                AI automatically processes and understands construction
-                documents for intelligent question answering.
-              </p>
-            </div>
-            <div className="feature-card">
-              <h4>
-                <span className="heading-icon">
-                  <Icon name="handshake" size={16} />
-                </span>
-                Construction Expertise
-              </h4>
-              <p>
-                Specialized knowledge in project management, scheduling,
-                budgeting, and construction best practices.
-              </p>
-            </div>
-          </div>
-        </div>
       </div>
 
       {generationModalOpen && (
