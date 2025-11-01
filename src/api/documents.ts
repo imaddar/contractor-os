@@ -1,4 +1,5 @@
 import type { Project } from './projects';
+import type { Schedule } from './schedules';
 
 const API_BASE_URL = 'http://localhost:8000';
 
@@ -33,6 +34,16 @@ export interface GenerateProjectResponse {
   raw_response?: string;
   persisted: boolean;
   created_project?: Project;
+}
+
+export interface GenerateTasksResponse {
+  source_filename: string;
+  project_id: number;
+  persisted: boolean;
+  created_task_ids: number[];
+  tasks: Schedule[];
+  raw_response?: string;
+  thinking_log?: string[];
 }
 
 export const documentsApi = {
@@ -113,12 +124,49 @@ export const documentsApi = {
     return response.json();
   },
 
+  async generateTasksFromDocument(
+    filename: string,
+    projectId: number,
+    options: { maxTasks?: number; persist?: boolean } = {}
+  ): Promise<GenerateTasksResponse> {
+    if (!filename || filename === 'Unknown') {
+      throw new Error('Invalid filename');
+    }
+    if (!projectId) {
+      throw new Error('A valid project is required for task generation');
+    }
+
+    const body = {
+      project_id: projectId,
+      persist: options.persist ?? true,
+      max_tasks: options.maxTasks,
+    };
+
+    const response = await fetch(
+      `${API_BASE_URL}/documents/${encodeURIComponent(filename)}/generate-tasks`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      }
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || 'Failed to generate tasks from document');
+    }
+
+    return response.json();
+  },
+
   // Legacy methods for backward compatibility
-  async getById(id: number): Promise<Document> {
+  async getById(): Promise<Document> {
     throw new Error('getById is deprecated - use getByFilename instead');
   },
 
-  async delete(id: number): Promise<void> {
+  async delete(): Promise<void> {
     throw new Error('delete is deprecated - use deleteByFilename instead');
   },
 };

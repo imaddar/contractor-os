@@ -15,7 +15,6 @@ const SchedulePage: React.FC = () => {
   const [subcontractors, setSubcontractors] = useState<Subcontractor[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showForm, setShowForm] = useState(false);
   const [viewMode, setViewMode] = useState<"calendar" | "list">("calendar");
   const [selectedSchedule, setSelectedSchedule] = useState<Schedule | null>(
     null,
@@ -35,6 +34,12 @@ const SchedulePage: React.FC = () => {
     null,
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [proposedTasks, setProposedTasks] = useState<Schedule[]>([]);
+  const [showProposedModal, setShowProposedModal] = useState(false);
+  const [processingProposalId, setProcessingProposalId] = useState<
+    number | null
+  >(null);
+  const [proposalError, setProposalError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -58,7 +63,15 @@ const SchedulePage: React.FC = () => {
           projectsApi.getAll(),
           subcontractorsApi.getAll(),
         ]);
-      setSchedules(schedulesData);
+      const proposed = schedulesData.filter(
+        (task) => task.status === "proposed",
+      );
+      const activeSchedules = schedulesData.filter(
+        (task) => task.status !== "proposed",
+      );
+      setSchedules(activeSchedules);
+      setProposedTasks(proposed);
+      setProposalError(null);
       setProjects(projectsData);
       setSubcontractors(subcontractorsData);
     } catch (err) {
@@ -102,9 +115,11 @@ const SchedulePage: React.FC = () => {
       setShowDeleteModal(false);
       setDeletingSchedule(null);
       setError(null);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Error deleting schedule:", err);
-      setError(err.message || "Failed to delete schedule");
+      const message =
+        err instanceof Error ? err.message : "Failed to delete schedule";
+      setError(message);
       // Keep modal open to show error
     } finally {
       setIsSubmitting(false);
@@ -115,6 +130,59 @@ const SchedulePage: React.FC = () => {
     setShowDeleteModal(false);
     setDeletingSchedule(null);
     setError(null);
+  };
+
+  const acceptProposedTask = async (task: Schedule) => {
+    if (!task.id) return;
+    try {
+      setProcessingProposalId(task.id);
+      setProposalError(null);
+      await schedulesApi.update(task.id, {
+        project_id: task.project_id,
+        task_name: task.task_name,
+        start_date: task.start_date || undefined,
+        end_date: task.end_date || undefined,
+        assigned_to: task.assigned_to ?? undefined,
+        status: "pending",
+      });
+      await fetchData();
+    } catch (err) {
+      console.error("Error accepting proposed task:", err);
+      setProposalError(
+        err instanceof Error
+          ? err.message
+          : "Failed to accept the proposed task",
+      );
+    } finally {
+      setProcessingProposalId(null);
+    }
+  };
+
+  const rejectProposedTask = async (task: Schedule) => {
+    if (!task.id) return;
+    try {
+      setProcessingProposalId(task.id);
+      setProposalError(null);
+      await schedulesApi.delete(task.id);
+      await fetchData();
+    } catch (err) {
+      console.error("Error rejecting proposed task:", err);
+      setProposalError(
+        err instanceof Error
+          ? err.message
+          : "Failed to reject the proposed task",
+      );
+    } finally {
+      setProcessingProposalId(null);
+    }
+  };
+
+  const closeProposedModal = () => {
+    if (processingProposalId !== null) {
+      return;
+    }
+    setShowProposedModal(false);
+    setProposalError(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -162,7 +230,6 @@ const SchedulePage: React.FC = () => {
       status: "pending",
     });
     setEditingSchedule(null);
-    setShowForm(false);
     setShowEditModal(false);
   };
 
@@ -183,7 +250,6 @@ const SchedulePage: React.FC = () => {
   const handleDateClick = (date: Date) => {
     const dateString = date.toISOString().split("T")[0];
     setFormData((prev) => ({ ...prev, start_date: dateString }));
-    setShowForm(true);
   };
 
   const closeModal = () => {
@@ -213,6 +279,20 @@ const SchedulePage: React.FC = () => {
               <span>List</span>
             </button>
           </div>
+          <button
+            className="btn btn-secondary"
+            onClick={() => {
+              setShowProposedModal(true);
+              setProposalError(null);
+            }}
+            disabled={proposedTasks.length === 0}
+          >
+            <Icon name="tasks" size={16} />
+            <span style={{ marginLeft: "0.5rem" }}>
+              Review Proposed Tasks
+              {proposedTasks.length > 0 ? ` (${proposedTasks.length})` : ""}
+            </span>
+          </button>
           <button
             className="btn btn-primary"
             onClick={() => setShowEditModal(true)}
@@ -353,6 +433,110 @@ const SchedulePage: React.FC = () => {
                 onClick={() => handleDelete(selectedSchedule)}
               >
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showProposedModal && (
+        <div className="modal-overlay" onClick={closeProposedModal}>
+          <div
+            className="modal-content edit-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h3>Review Proposed Tasks</h3>
+              <button
+                onClick={closeProposedModal}
+                className="modal-close"
+                aria-label="Close proposed tasks"
+                disabled={processingProposalId !== null}
+              >
+                ×
+              </button>
+            </div>
+            <div className="modal-body">
+              {proposalError && (
+                <div className="error-message" style={{ marginBottom: "1rem" }}>
+                  {proposalError}
+                </div>
+              )}
+              {proposedTasks.length === 0 ? (
+                <div className="empty-state">
+                  <p>All proposed tasks have been addressed.</p>
+                </div>
+              ) : (
+                <div className="projects-grid">
+                  {proposedTasks.map((task) => {
+                    const isProcessing = processingProposalId === task.id;
+                    const isBusy = processingProposalId !== null;
+                    return (
+                      <div className="project-card" key={task.id}>
+                        <div className="project-header">
+                          <h3>{task.task_name}</h3>
+                          <span className={`status ${task.status}`}>
+                            {task.status}
+                          </span>
+                        </div>
+                        <div className="project-details">
+                          <div className="detail">
+                            <strong>Project:</strong>{" "}
+                            {getProjectName(task.project_id)}
+                          </div>
+                          <div className="detail">
+                            <strong>Start:</strong>{" "}
+                            {task.start_date
+                              ? new Date(task.start_date).toLocaleDateString()
+                              : "TBD"}
+                          </div>
+                          <div className="detail">
+                            <strong>End:</strong>{" "}
+                            {task.end_date
+                              ? new Date(task.end_date).toLocaleDateString()
+                              : "TBD"}
+                          </div>
+                          <div className="detail">
+                            <strong>Assigned:</strong>{" "}
+                            {task.assigned_to
+                              ? getSubcontractorName(task.assigned_to)
+                              : "Unassigned"}
+                          </div>
+                        </div>
+                        <div className="project-actions">
+                          <button
+                            className="btn btn-small btn-primary"
+                            onClick={() => acceptProposedTask(task)}
+                            disabled={isBusy}
+                          >
+                            {isProcessing && processingProposalId === task.id
+                              ? "Accepting..."
+                              : "Accept"}
+                          </button>
+                          <button
+                            className="btn btn-small btn-secondary"
+                            onClick={() => rejectProposedTask(task)}
+                            disabled={isBusy}
+                          >
+                            {isProcessing && processingProposalId === task.id
+                              ? "Discarding..."
+                              : "Discard"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={closeProposedModal}
+                disabled={processingProposalId !== null}
+              >
+                Close
               </button>
             </div>
           </div>

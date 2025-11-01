@@ -11,10 +11,20 @@ export interface Schedule {
 }
 
 export const schedulesApi = {
-  async getAll(projectId?: number): Promise<Schedule[]> {
-    const url = projectId 
-      ? `${API_BASE_URL}/schedules?project_id=${projectId}`
+  async getAll(params?: { projectId?: number; status?: string }): Promise<Schedule[]> {
+    const searchParams = new URLSearchParams();
+    if (params?.projectId !== undefined) {
+      searchParams.set('project_id', params.projectId.toString());
+    }
+    if (params?.status) {
+      searchParams.set('status', params.status);
+    }
+
+    const query = searchParams.toString();
+    const url = query
+      ? `${API_BASE_URL}/schedules?${query}`
       : `${API_BASE_URL}/schedules`;
+
     const response = await fetch(url);
     if (!response.ok) {
       throw new Error('Failed to fetch schedules');

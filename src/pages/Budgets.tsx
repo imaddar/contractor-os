@@ -93,9 +93,11 @@ const Budgets: React.FC = () => {
       setShowDeleteModal(false);
       setDeletingBudget(null);
       setError(null);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error deleting budget:', err);
-      setError(err.message || 'Failed to delete budget');
+      const message =
+        err instanceof Error ? err.message : 'Failed to delete budget';
+      setError(message);
       // Keep modal open to show error
     } finally {
       setIsSubmitting(false);

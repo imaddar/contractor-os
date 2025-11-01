@@ -210,6 +210,61 @@ class GeneratedProjectDetails(BaseModel):
         return None
 
 
+class GeneratedScheduleTask(BaseModel):
+    task_name: str
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    status: str = "proposed"
+
+    @validator("task_name")
+    def _require_task_name(cls, value: str) -> str:
+        cleaned = (value or "").strip()
+        if not cleaned:
+            raise ValueError("task_name cannot be empty")
+        return cleaned
+
+    @validator("start_date", "end_date", pre=True)
+    def _normalize_optional_date(cls, value):
+        if not value:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped or stripped.lower() in {"tbd", "n/a", "unknown"}:
+                return None
+            if re.match(r"^\d{4}-\d{2}-\d{2}$", stripped):
+                return stripped
+        return None
+
+    @validator("status", pre=True, always=True)
+    def _default_status(cls, value):
+        candidate = (value or "").strip().lower()
+        return candidate if candidate else "proposed"
+
+
+class GenerateTasksRequest(BaseModel):
+    project_id: int
+    persist: bool = True
+    max_tasks: int = 8
+
+    @validator("max_tasks")
+    def _clamp_max_tasks(cls, value: int) -> int:
+        if value < 1:
+            return 1
+        if value > 20:
+            return 20
+        return value
+
+
+class GenerateTasksResponse(BaseModel):
+    source_filename: str
+    project_id: int
+    persisted: bool
+    created_task_ids: List[int]
+    tasks: List[Schedule]
+    raw_response: Optional[str] = None
+    thinking_log: Optional[List[str]] = None
+
+
 class GenerateProjectRequest(BaseModel):
     persist: bool = False
 
@@ -528,12 +583,16 @@ async def delete_subcontractor(
 # Schedule endpoints
 @app.get("/schedules", response_model=List[Schedule])
 async def get_schedules(
-    project_id: Optional[int] = None, supabase_client: Client = Depends(get_supabase)
+    project_id: Optional[int] = None,
+    status: Optional[str] = None,
+    supabase_client: Client = Depends(get_supabase),
 ):
     try:
         query = supabase_client.table("schedules").select("*")
         if project_id:
             query = query.eq("project_id", project_id)
+        if status:
+            query = query.eq("status", status)
         result = query.execute()
         return result.data
     except Exception as e:
@@ -1049,6 +1108,240 @@ async def generate_project_from_document(
         raw_response=cleaned_content,
         persisted=persisted,
         created_project=created_project,
+    )
+
+
+@app.post(
+    "/documents/{filename}/generate-tasks", response_model=GenerateTasksResponse
+)
+async def generate_tasks_from_document(
+    filename: str,
+    request: GenerateTasksRequest = Body(...),
+    supabase_client: Client = Depends(get_supabase),
+):
+    try:
+        project_result = (
+            supabase_client.table("projects")
+            .select("*")
+            .eq("id", request.project_id)
+            .execute()
+        )
+    except Exception as project_error:
+        print(f"Task generation project lookup error: {project_error}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to verify project: {project_error}",
+        )
+
+    if not project_result.data:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    project_record = project_result.data[0]
+
+    try:
+        document = await get_document_by_filename(filename, supabase_client)
+    except HTTPException:
+        raise
+    except Exception as fetch_error:
+        print(f"Error retrieving document {filename} for tasks: {fetch_error}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve document '{filename}': {fetch_error}",
+        )
+
+    document_text = (document.get("content") or "").strip()
+    if not document_text:
+        raise HTTPException(
+            status_code=400,
+            detail="Document does not contain extracted text to analyze",
+        )
+
+    max_chars = int(os.getenv("TASK_GENERATION_MAX_CHARS", "6000"))
+    truncated_text = document_text[:max_chars]
+    if len(document_text) > max_chars:
+        truncated_text += (
+            f"\n\n[Content truncated to the first {max_chars} characters for analysis]"
+        )
+
+    if not ensure_chat_backend():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Task generation model is unavailable. "
+                "Ensure the local Ollama service is running."
+            ),
+        )
+
+    system_prompt = (
+        "You are ConstructIQ, an expert construction scheduler. "
+        "Return ONLY valid JSON matching this schema:\n"
+        "{\n"
+        '  "tasks": [\n'
+        "    {\n"
+        '      "task_name": "Concise task name focused on a single activity",\n'
+        '      "start_date": "YYYY-MM-DD" | null,\n'
+        '      "end_date": "YYYY-MM-DD" | null,\n'
+        '      "status": "proposed"\n'
+        "    }\n"
+        "  ]\n"
+        "}\n"
+        "Keep the task list practical for field execution, and make the tasks concrete and actionable; avoid vague tasks but rather more specific."
+        "Limit to the most critical phases, up to the provided max task count. "
+        "Only set dates when the document provides clear sequencing information; otherwise use null. "
+        "Never include commentary outside the JSON."
+    )
+
+    project_summary_lines = [
+        f"Project: {project_record.get('name', 'Unnamed')}",
+        f"Status: {project_record.get('status', 'unknown')}",
+    ]
+    if project_record.get("start_date"):
+        project_summary_lines.append(f"Start Date: {project_record['start_date']}")
+    if project_record.get("end_date"):
+        project_summary_lines.append(f"End Date: {project_record['end_date']}")
+    if project_record.get("address"):
+        project_summary_lines.append(f"Address: {project_record['address']}")
+
+    project_context = "\n".join(project_summary_lines)
+
+    human_prompt = (
+        f"{project_context}\n"
+        f"Max tasks required: {request.max_tasks}\n"
+        "Analyze the following construction document excerpt and propose realistic schedule tasks "
+        "tailored to this project.\n"
+        "<<BEGIN DOCUMENT>>\n"
+        f"{truncated_text}\n"
+        "<<END DOCUMENT>>"
+    )
+    thinking_log: List[str] = [
+        "Gathering project context and constraints.",
+        "Reviewing document excerpt for schedule cues.",
+        "Preparing proposed task breakdown.",
+    ]
+
+    try:
+        llm_response = chat_llm.invoke(
+            [SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)]
+        )
+        raw_content = getattr(llm_response, "content", str(llm_response))
+    except Exception as llm_error:
+        print(f"Task generation LLM error: {llm_error}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate tasks from document: {llm_error}",
+        )
+
+    cleaned_content = clean_ai_response(raw_content)
+    try:
+        structured_payload = extract_json_block(cleaned_content)
+    except Exception as parsing_error:
+        print(f"Task generation parsing error: {parsing_error}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Unable to parse AI response into tasks: {parsing_error}",
+        )
+
+    tasks_payload = structured_payload.get("tasks")
+    if not isinstance(tasks_payload, list):
+        raise HTTPException(
+            status_code=502,
+            detail="AI response did not include a 'tasks' list",
+        )
+
+    generated_tasks: List[GeneratedScheduleTask] = []
+    for item in tasks_payload[: request.max_tasks]:
+        try:
+            generated_tasks.append(GeneratedScheduleTask(**item))
+        except Exception as task_error:
+            print(f"Skipping invalid generated task: {task_error}")
+
+    if not generated_tasks:
+        raise HTTPException(
+            status_code=502, detail="No valid tasks could be extracted from AI response"
+        )
+
+    prepared_rows = []
+    for task in generated_tasks:
+        start_date = task.start_date
+        end_date = task.end_date
+        if start_date and end_date:
+            try:
+                start_dt = datetime.fromisoformat(start_date)
+                end_dt = datetime.fromisoformat(end_date)
+                if end_dt < start_dt:
+                    end_date = None
+            except ValueError:
+                start_date = None
+                end_date = None
+
+        prepared_rows.append(
+            {
+                "project_id": request.project_id,
+                "task_name": task.task_name,
+                "start_date": start_date,
+                "end_date": end_date,
+                "assigned_to": None,
+                "status": "proposed",
+            }
+        )
+
+    created_records: List[Schedule] = []
+    created_ids: List[int] = []
+
+    if request.persist:
+        try:
+            insertion = (
+                supabase_client.table("schedules")
+                .insert(prepared_rows)
+                .execute()
+            )
+            created_data = insertion.data or []
+            if created_data:
+                created_records = [Schedule(**row) for row in created_data]
+            else:
+                created_records = [
+                    Schedule(
+                        id=None,
+                        project_id=row["project_id"],
+                        task_name=row["task_name"],
+                        start_date=row.get("start_date"),
+                        end_date=row.get("end_date"),
+                        assigned_to=None,
+                        status=row.get("status", "proposed"),
+                    )
+                    for row in prepared_rows
+                ]
+            created_ids = [
+                row["id"] for row in created_data if isinstance(row.get("id"), int)
+            ]
+        except Exception as insert_error:
+            print(f"Task persistence error: {insert_error}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to persist generated tasks: {insert_error}",
+            )
+    else:
+        created_records = [
+            Schedule(
+                project_id=row["project_id"],
+                task_name=row["task_name"],
+                start_date=row.get("start_date"),
+                end_date=row.get("end_date"),
+                assigned_to=None,
+                status=row.get("status", "proposed"),
+            )
+            for row in prepared_rows
+        ]
+    thinking_log.append(
+        f"Created {len(created_records)} proposed task{'s' if len(created_records) != 1 else ''} for {project_record.get('name', 'the project')}."
+    )
+
+    return GenerateTasksResponse(
+        source_filename=filename,
+        project_id=request.project_id,
+        persisted=request.persist,
+        created_task_ids=created_ids,
+        tasks=created_records,
     )
 
 
