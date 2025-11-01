@@ -95,6 +95,18 @@ function ConstructIQ() {
   >(null);
   const [showFeatureInfo, setShowFeatureInfo] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [taskModalOpen, setTaskModalOpen] = useState(false);
+  const [taskModalDocument, setTaskModalDocument] = useState("");
+  const [taskModalProject, setTaskModalProject] = useState("");
+  const [taskModalMaxTasks, setTaskModalMaxTasks] = useState(8);
+  const [isGeneratingTasks, setIsGeneratingTasks] = useState(false);
+  const [taskGenerationError, setTaskGenerationError] = useState<string | null>(
+    null,
+  );
+  const [taskGenerationSuccess, setTaskGenerationSuccess] = useState<
+    string | null
+  >(null);
+  const [taskPreview, setTaskPreview] = useState<Schedule[]>([]);
 
   // Chat-related state
   const [chatMessages, setChatMessages] = useState<
@@ -907,6 +919,83 @@ function ConstructIQ() {
     }
   };
 
+  const openTaskModal = () => {
+    if (!hasValidDocuments || !hasSelectableProjects) {
+      return;
+    }
+    setTaskGenerationError(null);
+    setTaskGenerationSuccess(null);
+    setTaskPreview([]);
+    const defaultDoc = selectedGenerationDocument
+      ? selectedGenerationDocument
+      : uploadedFiles.find((doc) => doc.filename && doc.filename !== "Unknown")
+          ?.filename || "";
+    setTaskModalDocument(defaultDoc);
+
+    const defaultProjectId = selectedGenerationProjects[0]
+      ? selectedGenerationProjects[0]
+      : projects.find((project) => project.id)?.id?.toString() || "";
+    setTaskModalProject(defaultProjectId);
+    setTaskModalMaxTasks(8);
+    setTaskModalOpen(true);
+  };
+
+  const closeTaskModal = () => {
+    if (isGeneratingTasks) {
+      return;
+    }
+    setTaskModalOpen(false);
+    setTaskGenerationError(null);
+  };
+
+  const handleTaskGeneration = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!taskModalDocument || taskModalDocument === "Unknown") {
+      setTaskGenerationError("Select a valid document to continue.");
+      return;
+    }
+    if (!taskModalProject) {
+      setTaskGenerationError("Select a project to generate tasks for.");
+      return;
+    }
+    const projectId = parseInt(taskModalProject, 10);
+    if (!Number.isFinite(projectId)) {
+      setTaskGenerationError("Project selection is invalid.");
+      return;
+    }
+
+    setIsGeneratingTasks(true);
+    setTaskGenerationError(null);
+    setTaskPreview([]);
+    try {
+      const response = await documentsApi.generateTasksFromDocument(
+        taskModalDocument,
+        projectId,
+        { maxTasks: taskModalMaxTasks, persist: true },
+      );
+      setTaskPreview(response.tasks);
+      const projectName =
+        projects.find((project) => project.id === projectId)?.name ||
+        "the selected project";
+      setTaskGenerationSuccess(
+        `Created ${response.tasks.length} proposed task${
+          response.tasks.length === 1 ? "" : "s"
+        } for ${projectName}. Review them on the Schedule page to accept or discard.`,
+      );
+    } catch (err) {
+      console.error("Task generation error:", err);
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Failed to auto-populate tasks from the selected document.";
+      setTaskGenerationError(message);
+      setTaskGenerationSuccess(null);
+      setTaskPreview([]);
+    } finally {
+      setIsGeneratingTasks(false);
+    }
+  };
+
   return (
     <div className="page-content">
       <div className="page-header">
@@ -945,26 +1034,6 @@ function ConstructIQ() {
             </div>
           )}
         </div>
-        <button
-          className="btn btn-primary"
-          onClick={() => openGenerationModal("both")}
-          disabled={
-            !hasValidDocuments ||
-            !hasSelectableProjects ||
-            isUploading ||
-            isLoading
-          }
-          title={
-            !hasValidDocuments
-              ? "Upload a document to enable the AI generator"
-              : !hasSelectableProjects
-                ? "Create a project before running the AI generator"
-                : "Generate project briefs and tasks from your documents"
-          }
-        >
-          <Icon name="tasks" size={16} />
-          <span style={{ marginLeft: "0.5rem" }}>Run Full Generation</span>
-        </button>
       </div>
 
       <div className="constructiq-container">
@@ -1141,6 +1210,9 @@ function ConstructIQ() {
           style={{ display: "none" }}
         />
 
+        <div className="section-header">
+          <h3>AI Actions</h3>
+        </div>
         <div className="action-button-row">
           <button
             type="button"
@@ -1166,8 +1238,8 @@ function ConstructIQ() {
           </button>
           <button
             type="button"
-            className="btn btn-primary"
-            onClick={() => openGenerationModal("tasks")}
+            className="btn btn-secondary"
+            onClick={openTaskModal}
             disabled={
               !hasValidDocuments ||
               !hasSelectableProjects ||
@@ -1188,6 +1260,16 @@ function ConstructIQ() {
 
         <div className="documents-section">
           <h3>Processed Documents</h3>
+          {taskGenerationSuccess && (
+            <div className="success-message" style={{ marginBottom: "1rem" }}>
+              {taskGenerationSuccess}
+            </div>
+          )}
+          {taskGenerationError && !taskModalOpen && (
+            <div className="error-message" style={{ marginBottom: "1rem" }}>
+              {taskGenerationError}
+            </div>
+          )}
           {generationSuccess && (
             <div className="success-message" style={{ marginBottom: "1rem" }}>
               {generationSuccess}
@@ -1373,6 +1455,178 @@ function ConstructIQ() {
         </div>
 
       </div>
+
+      {taskModalOpen && (
+        <div
+          className="modal-overlay"
+          onClick={() => {
+            if (!isGeneratingTasks) {
+              closeTaskModal();
+            }
+          }}
+        >
+          <div
+            className="modal-content edit-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h3>
+                <span className="heading-icon">
+                  <Icon name="tasks" size={18} />
+                </span>
+                Auto-Populate Tasks
+              </h3>
+              <button
+                onClick={closeTaskModal}
+                className="modal-close"
+                aria-label="Close auto populate tasks modal"
+                disabled={isGeneratingTasks}
+              >
+                <Icon name="close" size={18} />
+              </button>
+            </div>
+            <form onSubmit={handleTaskGeneration}>
+              <div className="modal-body">
+                {!hasValidDocuments || !hasSelectableProjects ? (
+                  <div className="empty-state">
+                    <p>
+                      Upload at least one document and create a project to auto-populate tasks.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="form-group">
+                      <label htmlFor="task-source-document">Source Document *</label>
+                      <select
+                        id="task-source-document"
+                        value={taskModalDocument}
+                        onChange={(e) => setTaskModalDocument(e.target.value)}
+                        disabled={isGeneratingTasks}
+                        required
+                      >
+                        {uploadedFiles.map((doc) =>
+                          doc.filename && doc.filename !== "Unknown" ? (
+                            <option key={doc.filename} value={doc.filename}>
+                              {doc.filename}
+                            </option>
+                          ) : null,
+                        )}
+                      </select>
+                    </div>
+
+                    <div className="form-group">
+                      <label htmlFor="task-target-project">Target Project *</label>
+                      <select
+                        id="task-target-project"
+                        value={taskModalProject}
+                        onChange={(e) => setTaskModalProject(e.target.value)}
+                        disabled={isGeneratingTasks}
+                        required
+                      >
+                        {projects
+                          .filter((project) => project.id)
+                          .map((project) => (
+                            <option key={project.id} value={project.id}>
+                              {project.name}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+
+                    <div className="form-group">
+                      <label htmlFor="task-max-count">Maximum Tasks (1-20)</label>
+                      <input
+                        type="number"
+                        id="task-max-count"
+                        min={1}
+                        max={20}
+                        value={taskModalMaxTasks}
+                        onChange={(e) => {
+                          const nextValue = parseInt(e.target.value, 10);
+                          if (Number.isNaN(nextValue)) {
+                            setTaskModalMaxTasks(1);
+                          } else {
+                            setTaskModalMaxTasks(
+                              Math.max(1, Math.min(20, nextValue)),
+                            );
+                          }
+                        }}
+                        disabled={isGeneratingTasks}
+                      />
+                    </div>
+
+                    {taskGenerationError && (
+                      <div className="error-message">{taskGenerationError}</div>
+                    )}
+                    {taskGenerationSuccess && (
+                      <div className="success-message">{taskGenerationSuccess}</div>
+                    )}
+
+                    {taskPreview.length > 0 && (
+                      <div className="generated-tasks-preview">
+                        <h4>Generated Proposed Tasks</h4>
+                        <p className="preview-hint">
+                          Proposed tasks are saved with status <strong>proposed</strong>. Review them from the Schedule page.
+                        </p>
+                        <div className="projects-grid">
+                          {taskPreview.map((task, index) => (
+                            <div className="project-card" key={`${task.task_name}-${index}`}>
+                              <div className="project-header">
+                                <h3>{task.task_name}</h3>
+                                <span className={`status ${task.status}`}>
+                                  {task.status}
+                                </span>
+                              </div>
+                              <div className="project-details">
+                                <div className="detail">
+                                  <strong>Start:</strong>{" "}
+                                  {task.start_date
+                                    ? new Date(task.start_date).toLocaleDateString()
+                                    : "TBD"}
+                                </div>
+                                <div className="detail">
+                                  <strong>End:</strong>{" "}
+                                  {task.end_date
+                                    ? new Date(task.end_date).toLocaleDateString()
+                                    : "TBD"}
+                                </div>
+                                <div className="detail">
+                                  <strong>Assigned:</strong> Unassigned
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+              <div className="modal-actions">
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={
+                    isGeneratingTasks ||
+                    !hasValidDocuments ||
+                    !hasSelectableProjects
+                  }
+                >
+                  {isGeneratingTasks ? "Generating..." : "Generate Tasks"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={closeTaskModal}
+                  disabled={isGeneratingTasks}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {generationModalOpen && (
         <div
