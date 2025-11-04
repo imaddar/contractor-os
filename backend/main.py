@@ -69,20 +69,30 @@ else:
 
 # Initialize embeddings for RAG - lazy loaded on first use
 embeddings = None
+_embeddings_init_failed = False
 
 def get_embeddings():
     """Lazy load embeddings model on first use to improve startup time."""
-    global embeddings
-    if embeddings is None:
-        try:
-            embeddings = HuggingFaceEmbeddings(
-                model_name="sentence-transformers/all-mpnet-base-v2"
-            )
-            print("Embeddings model initialized")
-        except Exception as e:
-            print(f"Warning: Could not initialize embeddings model: {e}")
-            embeddings = False  # Mark as failed to avoid repeated attempts
-    return embeddings if embeddings is not False else None
+    global embeddings, _embeddings_init_failed
+    
+    # Return cached embeddings if available
+    if embeddings is not None:
+        return embeddings
+    
+    # Don't retry if initialization previously failed
+    if _embeddings_init_failed:
+        return None
+    
+    try:
+        embeddings = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-mpnet-base-v2"
+        )
+        print("Embeddings model initialized")
+        return embeddings
+    except Exception as e:
+        print(f"Warning: Could not initialize embeddings model: {e}")
+        _embeddings_init_failed = True
+        return None
 
 # Initialize LLM for chat functionality
 try:

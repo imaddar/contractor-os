@@ -75,24 +75,43 @@ const Calendar: React.FC<CalendarProps> = ({
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
     
-    calendarEvents.forEach((event) => {
-      // Only process events that might appear in the current month
+    // Helper function to check if an event intersects with the current month
+    const isEventInMonth = (event: CalendarEvent, year: number, month: number): boolean => {
       const eventStartMonth = event.startDate.getMonth();
       const eventStartYear = event.startDate.getFullYear();
       const eventEndMonth = event.endDate.getMonth();
       const eventEndYear = event.endDate.getFullYear();
       
-      // Skip events that are clearly outside the current month
-      if ((eventEndYear < year || (eventEndYear === year && eventEndMonth < month)) ||
-          (eventStartYear > year || (eventStartYear === year && eventStartMonth > month))) {
+      // Event ends before current month
+      if (eventEndYear < year || (eventEndYear === year && eventEndMonth < month)) {
+        return false;
+      }
+      
+      // Event starts after current month
+      if (eventStartYear > year || (eventStartYear === year && eventStartMonth > month)) {
+        return false;
+      }
+      
+      return true;
+    };
+    
+    calendarEvents.forEach((event) => {
+      // Skip events that don't intersect with the current month
+      if (!isEventInMonth(event, year, month)) {
         return;
       }
       
       // Calculate days in the current month this event spans
       const daysInMonth = new Date(year, month + 1, 0).getDate();
+      const currentMonthDate = new Date(year, month, 1);
+      
       for (let day = 1; day <= daysInMonth; day++) {
-        const date = new Date(year, month, day);
-        if (date >= event.startDate && date <= event.endDate) {
+        currentMonthDate.setDate(day);
+        const dateTime = currentMonthDate.getTime();
+        const startTime = event.startDate.getTime();
+        const endTime = event.endDate.getTime();
+        
+        if (dateTime >= startTime && dateTime <= endTime) {
           const key = `${year}-${month}-${day}`;
           const existing = map.get(key) || [];
           existing.push(event);
