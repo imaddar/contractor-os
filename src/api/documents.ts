@@ -1,7 +1,6 @@
 import type { Project } from './projects';
 import type { Schedule } from './schedules';
-
-const API_BASE_URL = 'http://localhost:8000';
+import { API_BASE_URL } from './config';
 
 export interface Document {
   id?: string;  // Change to string for vector store compatibility
