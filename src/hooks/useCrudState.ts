@@ -9,6 +9,11 @@ interface CrudHookOptions {
 
 /**
  * Custom hook to handle common CRUD operations and state management
+ * 
+ * @param options.fetchData - Function to fetch data. Should be wrapped with useCallback 
+ *                            in the consuming component to prevent infinite re-renders.
+ * @param options.deleteFn - Optional function to delete an item by ID
+ * @param options.itemName - Name of the item type for error messages (default: 'item')
  */
 export function useCrudState<T extends { id?: number }>(
   options: CrudHookOptions
@@ -44,7 +49,10 @@ export function useCrudState<T extends { id?: number }>(
   useEffect(() => {
     if (searchParams.get('action') === 'new') {
       setShowEditModal(true);
-      setSearchParams({});
+      // Remove only the 'action' parameter while preserving other params
+      const newParams = new URLSearchParams(searchParams);
+      newParams.delete('action');
+      setSearchParams(newParams);
     }
   }, [searchParams, setSearchParams]);
 
