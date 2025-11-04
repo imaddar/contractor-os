@@ -27,21 +27,47 @@ const Calendar: React.FC<CalendarProps> = ({
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
 
   useEffect(() => {
-    const events = schedules
-      .filter((schedule) => schedule.start_date && schedule.end_date)
-      .map((schedule) => {
-        const project = projects.find((p) => p.id === schedule.project_id);
-        return {
-          schedule,
-          project: project || {
-            id: 0,
-            name: "Unknown Project",
-            status: "active",
-          },
-          startDate: new Date(schedule.start_date!),
-          endDate: new Date(schedule.end_date!),
-        };
+    const events = schedules.reduce<CalendarEvent[]>((accumulator, schedule) => {
+      if (!schedule.start_date) {
+        return accumulator;
+      }
+
+      const parsedStart = new Date(schedule.start_date);
+      if (Number.isNaN(parsedStart.getTime())) {
+        return accumulator;
+      }
+
+      const parsedEnd = schedule.end_date ? new Date(schedule.end_date) : null;
+      const resolvedEnd =
+        parsedEnd && !Number.isNaN(parsedEnd.getTime()) ? parsedEnd : new Date(parsedStart);
+
+      const startDate = new Date(
+        parsedStart.getFullYear(),
+        parsedStart.getMonth(),
+        parsedStart.getDate(),
+      );
+      const endDate = new Date(
+        resolvedEnd.getFullYear(),
+        resolvedEnd.getMonth(),
+        resolvedEnd.getDate(),
+      );
+
+      const project = projects.find((p) => p.id === schedule.project_id);
+
+      accumulator.push({
+        schedule,
+        project: project || {
+          id: 0,
+          name: "Unknown Project",
+          status: "active",
+        },
+        startDate,
+        endDate,
       });
+
+      return accumulator;
+    }, []);
+
     setCalendarEvents(events);
   }, [schedules, projects]);
 
@@ -55,23 +81,13 @@ const Calendar: React.FC<CalendarProps> = ({
 
   const getEventsForDate = (date: Date) => {
     return calendarEvents.filter((event) => {
-      const eventStart = new Date(
-        event.startDate.getFullYear(),
-        event.startDate.getMonth(),
-        event.startDate.getDate(),
-      );
-      const eventEnd = new Date(
-        event.endDate.getFullYear(),
-        event.endDate.getMonth(),
-        event.endDate.getDate(),
-      );
       const targetDate = new Date(
         date.getFullYear(),
         date.getMonth(),
         date.getDate(),
       );
 
-      return targetDate >= eventStart && targetDate <= eventEnd;
+      return targetDate >= event.startDate && targetDate <= event.endDate;
     });
   };
 
