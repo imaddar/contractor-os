@@ -377,6 +377,8 @@ async def get_project(project_id: int, supabase_client: Client = Depends(get_sup
         if not result.data:
             raise HTTPException(status_code=404, detail="Project not found")
         return result.data[0]
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -395,6 +397,8 @@ async def update_project(
         if not result.data:
             raise HTTPException(status_code=404, detail="Project not found")
         return result.data[0]
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -504,6 +508,8 @@ async def get_subcontractor(
         if not result.data:
             raise HTTPException(status_code=404, detail="Subcontractor not found")
         return result.data[0]
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -524,6 +530,8 @@ async def update_subcontractor(
         if not result.data:
             raise HTTPException(status_code=404, detail="Subcontractor not found")
         return result.data[0]
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -726,6 +734,8 @@ async def get_budget(budget_id: int, supabase_client: Client = Depends(get_supab
         if not result.data:
             raise HTTPException(status_code=404, detail="Budget not found")
         return result.data[0]
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -744,6 +754,8 @@ async def update_budget(
         if not result.data:
             raise HTTPException(status_code=404, detail="Budget not found")
         return result.data[0]
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
