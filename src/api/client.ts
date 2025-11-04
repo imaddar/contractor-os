@@ -21,6 +21,20 @@ async function apiFetch<T>(
 }
 
 /**
+ * Generic fetch wrapper for operations that don't return data
+ */
+async function apiFetchNoContent(
+  url: string,
+  options?: RequestInit
+): Promise<void> {
+  const response = await fetch(url, options);
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({})) as ApiError;
+    throw new Error(errorData.detail || errorData.message || `Request failed with status ${response.status}`);
+  }
+}
+
+/**
  * Generic API client factory for CRUD operations
  */
 export function createApiClient<T extends { id?: number | string }>(
@@ -71,13 +85,9 @@ export function createApiClient<T extends { id?: number | string }>(
     },
 
     async delete(id: number | string): Promise<void> {
-      const response = await fetch(`${API_BASE_URL}/${resourcePath}/${id}`, {
+      return apiFetchNoContent(`${API_BASE_URL}/${resourcePath}/${id}`, {
         method: 'DELETE',
       });
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({})) as ApiError;
-        throw new Error(errorData.detail || `Failed to delete ${resourcePath}`);
-      }
     },
   };
 }
