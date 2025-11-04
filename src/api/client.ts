@@ -6,6 +6,14 @@ export interface ApiError {
 }
 
 /**
+ * Handle error response from API
+ */
+async function handleApiError(response: Response): Promise<never> {
+  const errorData = await response.json().catch(() => ({})) as ApiError;
+  throw new Error(errorData.detail || errorData.message || `Request failed with status ${response.status}`);
+}
+
+/**
  * Generic fetch wrapper with error handling
  */
 async function apiFetch<T>(
@@ -14,8 +22,7 @@ async function apiFetch<T>(
 ): Promise<T> {
   const response = await fetch(url, options);
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({})) as ApiError;
-    throw new Error(errorData.detail || errorData.message || `Request failed with status ${response.status}`);
+    await handleApiError(response);
   }
   return response.json();
 }
@@ -29,8 +36,7 @@ async function apiFetchNoContent(
 ): Promise<void> {
   const response = await fetch(url, options);
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({})) as ApiError;
-    throw new Error(errorData.detail || errorData.message || `Request failed with status ${response.status}`);
+    await handleApiError(response);
   }
 }
 

@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 
 interface CrudHookOptions {
   fetchData: () => Promise<void>;
-  deleteFn?: (id: number) => Promise<void>;
+  deleteFn?: (id: number | string) => Promise<void>;
   itemName?: string;
 }
 
@@ -12,10 +12,10 @@ interface CrudHookOptions {
  * 
  * @param options.fetchData - Function to fetch data. Should be wrapped with useCallback 
  *                            in the consuming component to prevent infinite re-renders.
- * @param options.deleteFn - Optional function to delete an item by ID
+ * @param options.deleteFn - Optional function to delete an item by ID (number or string)
  * @param options.itemName - Name of the item type for error messages (default: 'item')
  */
-export function useCrudState<T extends { id?: number }>(
+export function useCrudState<T extends { id?: number | string }>(
   options: CrudHookOptions
 ) {
   const { fetchData, deleteFn, itemName = 'item' } = options;
@@ -67,15 +67,12 @@ export function useCrudState<T extends { id?: number }>(
     
     try {
       setIsSubmitting(true);
-      console.log(`Deleting ${itemName}:`, deletingItem.id);
       await deleteFn(deletingItem.id);
-      console.log(`${itemName} deleted successfully`);
       await fetchData();
       setShowDeleteModal(false);
       setDeletingItem(null);
       setError(null);
     } catch (err: unknown) {
-      console.error(`Error deleting ${itemName}:`, err);
       const message =
         err instanceof Error ? err.message : `Failed to delete ${itemName}`;
       setError(message);
