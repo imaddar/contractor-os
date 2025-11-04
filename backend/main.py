@@ -67,15 +67,22 @@ if SUPABASE_SERVICE_KEY:
 else:
     print("No service role key found")
 
-# Initialize embeddings for RAG
-try:
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-mpnet-base-v2"
-    )
-    print("Embeddings model initialized")
-except Exception as e:
-    print(f"Warning: Could not initialize embeddings model: {e}")
-    embeddings = None
+# Initialize embeddings for RAG - lazy loaded on first use
+embeddings = None
+
+def get_embeddings():
+    """Lazy load embeddings model on first use to improve startup time."""
+    global embeddings
+    if embeddings is None:
+        try:
+            embeddings = HuggingFaceEmbeddings(
+                model_name="sentence-transformers/all-mpnet-base-v2"
+            )
+            print("Embeddings model initialized")
+        except Exception as e:
+            print(f"Warning: Could not initialize embeddings model: {e}")
+            embeddings = False  # Mark as failed to avoid repeated attempts
+    return embeddings if embeddings is not False else None
 
 # Initialize LLM for chat functionality
 try:
@@ -1367,7 +1374,9 @@ async def parse_document(
     if not file.filename or not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
-    if not embeddings:
+    # Lazy load embeddings on first use
+    embeddings_model = get_embeddings()
+    if not embeddings_model:
         print("Error: Embeddings model not available")
         raise HTTPException(status_code=500, detail="Embeddings model not available")
 
@@ -1433,7 +1442,7 @@ async def parse_document(
         print("Storing chunks in vector database...")
         vector_store = SupabaseVectorStore.from_documents(
             docs,
-            embeddings,
+            embeddings_model,
             client=service_supabase if service_supabase else supabase_client,
             table_name="documents",
             query_name="match_documents",
@@ -1479,13 +1488,14 @@ async def parse_document(
 @tool(response_format="content_and_artifact")
 def retrieve_documents(query: str):
     """Retrieve construction document information related to a query."""
-    if not embeddings:
+    embeddings_model = get_embeddings()
+    if not embeddings_model:
         return "Document search is not available", []
 
     try:
         vector_store = SupabaseVectorStore(
             client=service_supabase if service_supabase else supabase,
-            embedding=embeddings,
+            embedding=embeddings_model,
             table_name="documents",
             query_name="match_documents",
         )
@@ -1706,7 +1716,8 @@ def build_fallback_response(user_message: str) -> str:
     """Generate a simple, deterministic fallback response when the LLM is unavailable."""
     context_sections: List[str] = []
 
-    if embeddings and hasattr(retrieve_documents, "func"):
+    embeddings_model = get_embeddings()
+    if embeddings_model and hasattr(retrieve_documents, "func"):
         try:
             retrieval_result = retrieve_documents.func(user_message)
             if isinstance(retrieval_result, tuple):
