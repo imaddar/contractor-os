@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useMemo } from "react";
 import type { Schedule } from "../api/schedules";
 import type { Project } from "../api/projects";
 import { Icon } from "./Icon";
@@ -24,10 +24,10 @@ const Calendar: React.FC<CalendarProps> = ({
   onEventClick,
 }) => {
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
 
-  useEffect(() => {
-    const events = schedules.reduce<CalendarEvent[]>((accumulator, schedule) => {
+  // Memoize calendar events to avoid recalculation on every render
+  const calendarEvents = useMemo<CalendarEvent[]>(() => {
+    return schedules.reduce<CalendarEvent[]>((accumulator, schedule) => {
       if (!schedule.start_date) {
         return accumulator;
       }
@@ -67,9 +67,61 @@ const Calendar: React.FC<CalendarProps> = ({
 
       return accumulator;
     }, []);
-
-    setCalendarEvents(events);
   }, [schedules, projects]);
+
+  // Memoize events by date for the current month to avoid repeated filtering
+  const eventsByDate = useMemo(() => {
+    const map = new Map<string, CalendarEvent[]>();
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    
+    // Helper function to check if an event intersects with the current month
+    const isEventInMonth = (event: CalendarEvent, year: number, month: number): boolean => {
+      const eventStartMonth = event.startDate.getMonth();
+      const eventStartYear = event.startDate.getFullYear();
+      const eventEndMonth = event.endDate.getMonth();
+      const eventEndYear = event.endDate.getFullYear();
+      
+      // Event ends before current month
+      if (eventEndYear < year || (eventEndYear === year && eventEndMonth < month)) {
+        return false;
+      }
+      
+      // Event starts after current month
+      if (eventStartYear > year || (eventStartYear === year && eventStartMonth > month)) {
+        return false;
+      }
+      
+      return true;
+    };
+    
+    calendarEvents.forEach((event) => {
+      // Skip events that don't intersect with the current month
+      if (!isEventInMonth(event, year, month)) {
+        return;
+      }
+      
+      // Calculate days in the current month this event spans
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      const currentMonthDate = new Date(year, month, 1);
+      
+      for (let day = 1; day <= daysInMonth; day++) {
+        currentMonthDate.setDate(day);
+        const dateTime = currentMonthDate.getTime();
+        const startTime = event.startDate.getTime();
+        const endTime = event.endDate.getTime();
+        
+        if (dateTime >= startTime && dateTime <= endTime) {
+          const key = `${year}-${month}-${day}`;
+          const existing = map.get(key) || [];
+          existing.push(event);
+          map.set(key, existing);
+        }
+      }
+    });
+    
+    return map;
+  }, [calendarEvents, currentDate]);
 
   const getDaysInMonth = (date: Date) => {
     return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
@@ -79,16 +131,10 @@ const Calendar: React.FC<CalendarProps> = ({
     return new Date(date.getFullYear(), date.getMonth(), 1).getDay();
   };
 
-  const getEventsForDate = (date: Date) => {
-    return calendarEvents.filter((event) => {
-      const targetDate = new Date(
-        date.getFullYear(),
-        date.getMonth(),
-        date.getDate(),
-      );
-
-      return targetDate >= event.startDate && targetDate <= event.endDate;
-    });
+  // Optimized getEventsForDate using pre-computed map
+  const getEventsForDate = (date: Date): CalendarEvent[] => {
+    const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+    return eventsByDate.get(key) || [];
   };
 
   const navigateMonth = (direction: "prev" | "next") => {

@@ -69,8 +69,8 @@ function ConstructIQ() {
   const [progressSteps, setProgressSteps] = useState<ProgressStepState[]>([]);
   const [generationComplete, setGenerationComplete] = useState(false);
   const [thinkingFeed, setThinkingFeed] = useState<ThinkingLine[]>([]);
-  const thinkingTimeoutsRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
-  const thinkingSequencesRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
+  const thinkingTimeoutsRef = useRef<number[]>([]);
+  const thinkingSequencesRef = useRef<number[]>([]);
   const [generationError, setGenerationError] = useState<string | null>(null);
   const [generationSuccess, setGenerationSuccess] = useState<string | null>(
     null,

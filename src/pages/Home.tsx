@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { projectsApi } from "../api/projects";
+import { dashboardApi } from "../api/dashboard";
 import { schedulesApi } from "../api/schedules";
-import { budgetsApi } from "../api/budgets";
-import { subcontractorsApi } from "../api/subcontractors";
 import { Icon } from "../components/Icon";
 
 interface DashboardStats {
@@ -33,31 +31,14 @@ const Home: React.FC = () => {
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
-      const [projects, schedules, budgets, subcontractors] = await Promise.all([
-        projectsApi.getAll(),
-        schedulesApi.getAll(),
-        budgetsApi.getAll(),
-        subcontractorsApi.getAll(),
-      ]);
+      // Use the optimized dashboard summary endpoint
+      const summary = await dashboardApi.getSummary();
 
-      // Calculate active projects
-      const activeProjects = projects.filter(
-        (p) => p.status === "active",
-      ).length;
+      // Calculate pending tasks (pending + in_progress)
+      const pendingTasks = summary.tasks.pending + summary.tasks.in_progress;
 
-      // Calculate pending tasks
-      const pendingTasks = schedules.filter(
-        (s) => s.status === "pending" || s.status === "in-progress",
-      ).length;
-
-      // Calculate total budget across all projects
-      const totalBudget = budgets.reduce(
-        (sum, budget) => sum + budget.budgeted_amount,
-        0,
-      );
-
-      // Count active subcontractors (all subcontractors are considered active)
-      const activeSubcontractors = subcontractors.length;
+      // Fetch schedules only to calculate upcoming deadlines
+      const schedules = await schedulesApi.getAll();
 
       // Calculate upcoming deadlines (tasks ending within next 7 days)
       const nextWeek = new Date();
@@ -75,10 +56,10 @@ const Home: React.FC = () => {
       }).length;
 
       setStats({
-        activeProjects,
+        activeProjects: summary.projects.active,
         pendingTasks,
-        totalBudget,
-        activeSubcontractors,
+        totalBudget: summary.budgets.total_budgeted,
+        activeSubcontractors: summary.subcontractors.total,
         upcomingDeadlines,
       });
     } catch (err) {

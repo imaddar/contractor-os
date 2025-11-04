@@ -19,7 +19,8 @@ export type IconName =
   | 'arrow-left'
   | 'arrow-right'
   | 'clock'
-  | 'tasks';
+  | 'tasks'
+  | 'info';
 
 type IconProps = React.SVGProps<SVGSVGElement>;
 
@@ -30,7 +31,7 @@ const baseProps: Partial<IconProps> = {
   strokeLinejoin: 'round'
 };
 
-const icons: Record<IconName, (props: IconProps) => JSX.Element> = {
+const icons: Record<IconName, (props: IconProps) => React.JSX.Element> = {
   home: (props) => (
     <svg viewBox="0 0 24 24" {...baseProps} {...props}>
       <path d="M4 11.5 12 5l8 6.5" />
@@ -169,6 +170,13 @@ const icons: Record<IconName, (props: IconProps) => JSX.Element> = {
       <path d="m8 9 1.5 1.5L13 7" />
       <path d="M8 13h8" />
       <path d="M8 16h5" />
+    </svg>
+  ),
+  info: (props) => (
+    <svg viewBox="0 0 24 24" {...baseProps} {...props}>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 11v5" />
+      <circle cx="12" cy="8" r=".5" fill="currentColor" stroke="none" />
     </svg>
   )
 };
