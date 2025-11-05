@@ -230,13 +230,6 @@ const Subcontractors: React.FC = () => {
     fetchSubcontractors();
   }, []);
 
-  useEffect(() => {
-    if (searchParams.get("action") === "new") {
-      openCreateModal();
-      setSearchParams({});
-    }
-  }, [searchParams, setSearchParams, openCreateModal]);
-
   const fetchSubcontractors = async () => {
     try {
       setLoading(true);
@@ -268,6 +261,13 @@ const Subcontractors: React.FC = () => {
     setShowEditModal(true);
     setError(null);
   }, [initializeFormState]);
+
+  useEffect(() => {
+    if (searchParams.get("action") === "new") {
+      openCreateModal();
+      setSearchParams({});
+    }
+  }, [searchParams, setSearchParams, openCreateModal]);
 
   const handleEdit = (subcontractor: Subcontractor) => {
     setEditingSubcontractor(subcontractor);
