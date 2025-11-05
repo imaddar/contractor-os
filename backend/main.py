@@ -4,7 +4,7 @@ from supabase import create_client, Client
 import os
 from dotenv import load_dotenv
 from typing import Dict, List, Optional
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, Field, validator
 import uvicorn
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import CharacterTextSplitter
@@ -127,12 +127,126 @@ class Project(BaseModel):
     budget: Optional[float] = None
 
 
+class PerformanceMetrics(BaseModel):
+    overall_score: Optional[float] = None
+    safety_score: Optional[float] = None
+    quality_score: Optional[float] = None
+    schedule_score: Optional[float] = None
+    cost_score: Optional[float] = None
+
+    @validator("overall_score", "safety_score", "quality_score", "schedule_score", "cost_score", pre=True)
+    def _normalize_scores(cls, value):
+        if value is None or value == "":
+            return None
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError):
+            return None
+        # Clamp to 0-100 to keep scores within a standardized range
+        return max(0.0, min(100.0, numeric_value))
+
+
+class ComplianceDocumentStatus(BaseModel):
+    document_type: str
+    status: str
+    expires_at: Optional[str] = None
+    last_verified_at: Optional[str] = None
+
+
 class Subcontractor(BaseModel):
     id: Optional[int] = None
     name: str
     contact_email: Optional[str] = None
     phone: Optional[str] = None
     specialty: Optional[str] = None
+    performance_metrics: PerformanceMetrics = Field(default_factory=PerformanceMetrics)
+    compliance_documents: List[ComplianceDocumentStatus] = Field(default_factory=list)
+    preferred_vendor: bool = False
+
+
+def _normalize_subcontractor_payload(payload: Dict) -> Dict:
+    """Ensure optional subcontractor fields are populated with defaults."""
+    normalized = dict(payload or {})
+
+    performance_metrics = normalized.get("performance_metrics")
+    if not isinstance(performance_metrics, dict):
+        performance_metrics = {}
+    normalized["performance_metrics"] = performance_metrics
+
+    compliance_documents = normalized.get("compliance_documents")
+    if not isinstance(compliance_documents, list):
+        compliance_documents = []
+    normalized["compliance_documents"] = compliance_documents
+
+    preferred_vendor = normalized.get("preferred_vendor")
+    if isinstance(preferred_vendor, bool):
+        normalized["preferred_vendor"] = preferred_vendor
+    else:
+        normalized["preferred_vendor"] = False
+
+    return normalized
+
+
+def _prepare_performance_metrics(metrics: Optional[Dict]) -> Dict:
+    """Compute derived performance metrics and guard against invalid payloads."""
+    if not isinstance(metrics, dict):
+        return {}
+
+    cleaned_metrics: Dict[str, Optional[float]] = {}
+    for key, value in metrics.items():
+        if value is None or value == "":
+            cleaned_metrics[key] = None
+        else:
+            try:
+                cleaned_metrics[key] = float(value)
+            except (TypeError, ValueError):
+                cleaned_metrics[key] = None
+
+    overall = cleaned_metrics.get("overall_score")
+    if overall is None:
+        component_scores = [
+            score
+            for metric_key, score in cleaned_metrics.items()
+            if metric_key != "overall_score" and score is not None
+        ]
+        if component_scores:
+            cleaned_metrics["overall_score"] = round(
+                sum(component_scores) / len(component_scores), 2
+            )
+
+    return cleaned_metrics
+
+
+def _prepare_compliance_documents(documents: Optional[List[Dict]]) -> List[Dict]:
+    if not isinstance(documents, list):
+        return []
+
+    cleaned_documents: List[Dict] = []
+    for document in documents:
+        if not isinstance(document, dict):
+            continue
+
+        document_type = str(document.get("document_type") or document.get("name") or "").strip()
+        status = str(document.get("status") or "").strip().lower()
+        if not document_type:
+            continue
+
+        cleaned_document: Dict[str, Optional[str]] = {
+            "document_type": document_type,
+            "status": status or "missing",
+        }
+
+        expires_at = document.get("expires_at")
+        if expires_at:
+            cleaned_document["expires_at"] = expires_at
+
+        last_verified_at = document.get("last_verified_at")
+        if last_verified_at:
+            cleaned_document["last_verified_at"] = last_verified_at
+
+        cleaned_documents.append(cleaned_document)
+
+    return cleaned_documents
 
 
 class Schedule(BaseModel):
@@ -491,7 +605,11 @@ async def delete_project(
 async def get_subcontractors(supabase_client: Client = Depends(get_supabase)):
     try:
         result = supabase_client.table("subcontractors").select("*").execute()
-        return result.data
+        subcontractors = [
+            Subcontractor(**_normalize_subcontractor_payload(record))
+            for record in (result.data or [])
+        ]
+        return subcontractors
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -501,12 +619,23 @@ async def create_subcontractor(
     subcontractor: Subcontractor, supabase_client: Client = Depends(get_supabase)
 ):
     try:
+        subcontractor_payload = subcontractor.dict(exclude={"id"})
+        subcontractor_payload["performance_metrics"] = _prepare_performance_metrics(
+            subcontractor_payload.get("performance_metrics")
+        )
+        subcontractor_payload["compliance_documents"] = _prepare_compliance_documents(
+            subcontractor_payload.get("compliance_documents")
+        )
+
         result = (
             supabase_client.table("subcontractors")
-            .insert(subcontractor.dict(exclude={"id"}))
+            .insert(subcontractor_payload)
             .execute()
         )
-        return result.data[0]
+        if not result.data:
+            raise HTTPException(status_code=500, detail="Failed to create subcontractor")
+        created = _normalize_subcontractor_payload(result.data[0])
+        return Subcontractor(**created)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -524,7 +653,8 @@ async def get_subcontractor(
         )
         if not result.data:
             raise HTTPException(status_code=404, detail="Subcontractor not found")
-        return result.data[0]
+        record = _normalize_subcontractor_payload(result.data[0])
+        return Subcontractor(**record)
     except HTTPException:
         raise
     except Exception as e:
@@ -538,15 +668,24 @@ async def update_subcontractor(
     supabase_client: Client = Depends(get_supabase),
 ):
     try:
+        subcontractor_payload = subcontractor.dict(exclude={"id"})
+        subcontractor_payload["performance_metrics"] = _prepare_performance_metrics(
+            subcontractor_payload.get("performance_metrics")
+        )
+        subcontractor_payload["compliance_documents"] = _prepare_compliance_documents(
+            subcontractor_payload.get("compliance_documents")
+        )
+
         result = (
             supabase_client.table("subcontractors")
-            .update(subcontractor.dict(exclude={"id"}))
+            .update(subcontractor_payload)
             .eq("id", subcontractor_id)
             .execute()
         )
         if not result.data:
             raise HTTPException(status_code=404, detail="Subcontractor not found")
-        return result.data[0]
+        updated = _normalize_subcontractor_payload(result.data[0])
+        return Subcontractor(**updated)
     except HTTPException:
         raise
     except Exception as e:

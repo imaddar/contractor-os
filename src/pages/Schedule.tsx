@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { schedulesApi, type Schedule } from "../api/schedules";
 import { projectsApi, type Project } from "../api/projects";
@@ -7,6 +7,68 @@ import Calendar from "../components/Calendar";
 import EditModal from "../components/EditModal";
 import DeleteModal from "../components/DeleteModal";
 import { Icon } from "../components/Icon";
+
+const getSubcontractorOverallScore = (subcontractor: Subcontractor): number | null => {
+  const score = subcontractor.performance_metrics?.overall_score;
+  if (score === null || score === undefined) {
+    return null;
+  }
+  const numeric = Number(score);
+  return Number.isNaN(numeric) ? null : numeric;
+};
+
+const getComplianceCounts = (
+  subcontractor: Subcontractor,
+): { current: number; warning: number; critical: number; total: number } => {
+  const documents = subcontractor.compliance_documents ?? [];
+  return documents.reduce(
+    (acc, doc) => {
+      const status = (doc.status || "missing").toLowerCase();
+      if (status === "current") {
+        acc.current += 1;
+      } else if (status === "expiring" || status === "pending") {
+        acc.warning += 1;
+      } else {
+        acc.critical += 1;
+      }
+      acc.total += 1;
+      return acc;
+    },
+    { current: 0, warning: 0, critical: 0, total: 0 },
+  );
+};
+
+const computeRecommendationScore = (subcontractor: Subcontractor, context: string) => {
+  const overall = getSubcontractorOverallScore(subcontractor) ?? 0;
+  const compliance = getComplianceCounts(subcontractor);
+
+  let score = overall;
+  if (subcontractor.preferred_vendor) {
+    score += 10;
+  }
+  if (compliance.warning > 0) {
+    score -= 8;
+  }
+  if (compliance.critical > 0) {
+    score -= 35;
+  }
+
+  if (context && subcontractor.specialty) {
+    const specialty = subcontractor.specialty.toLowerCase();
+    if (context.includes(specialty)) {
+      score += 12;
+    }
+  }
+
+  return score;
+};
+
+type SubcontractorRecommendation = {
+  subcontractor: Subcontractor;
+  score: number;
+  overall: number | null;
+  compliance: ReturnType<typeof getComplianceCounts>;
+};
 
 const SchedulePage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -40,6 +102,47 @@ const SchedulePage: React.FC = () => {
     number | null
   >(null);
   const [proposalError, setProposalError] = useState<string | null>(null);
+
+  const selectedProject = useMemo(() => {
+    if (!formData.project_id) {
+      return undefined;
+    }
+    const projectId = parseInt(formData.project_id, 10);
+    if (Number.isNaN(projectId)) {
+      return undefined;
+    }
+    return projects.find((project) => project.id === projectId);
+  }, [projects, formData.project_id]);
+
+  const recommendationContext = useMemo(() => {
+    const projectName = selectedProject?.name ?? "";
+    return `${formData.task_name} ${projectName}`.trim().toLowerCase();
+  }, [formData.task_name, selectedProject]);
+
+  const recommendedSubcontractors = useMemo<SubcontractorRecommendation[]>(() => {
+    if (subcontractors.length === 0) {
+      return [];
+    }
+
+    return subcontractors
+      .map((sub) => {
+        const overall = getSubcontractorOverallScore(sub);
+        const compliance = getComplianceCounts(sub);
+        const score = computeRecommendationScore(sub, recommendationContext);
+        return { subcontractor: sub, score, overall, compliance };
+      })
+      .filter(({ score, overall, compliance }) => {
+        if (compliance.critical > 0 && score < 40) {
+          return false;
+        }
+        if (overall === null && score <= 0) {
+          return false;
+        }
+        return score > 20;
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
+  }, [subcontractors, recommendationContext]);
 
   useEffect(() => {
     fetchData();
@@ -643,6 +746,75 @@ const SchedulePage: React.FC = () => {
               <option value="delayed">Delayed</option>
             </select>
           </div>
+        </div>
+
+        <div className="form-section" style={{ marginTop: "1.5rem" }}>
+          <h4 style={{ marginBottom: "0.75rem" }}>Recommended Subcontractors</h4>
+          {recommendedSubcontractors.length === 0 ? (
+            <p style={{ fontSize: "0.85rem", color: "#6b7280", margin: 0 }}>
+              Add performance data for subcontractors to see personalized
+              recommendations.
+            </p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+              {recommendedSubcontractors.map(({ subcontractor, score, overall, compliance }) => {
+                const isSelected =
+                  formData.assigned_to ===
+                  (subcontractor.id ? subcontractor.id.toString() : "");
+                const hasCritical = compliance.critical > 0;
+                return (
+                  <div
+                    key={subcontractor.id}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: "1rem",
+                      alignItems: "center",
+                      border: "1px solid #e5e7eb",
+                      borderRadius: "0.75rem",
+                      padding: "0.75rem 1rem",
+                      backgroundColor: hasCritical ? "#fef2f2" : "#f9fafb",
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 600 }}>{subcontractor.name}</div>
+                      <div style={{ fontSize: "0.8rem", color: "#4b5563", marginTop: "0.25rem" }}>
+                        {subcontractor.specialty || "General"} · Performance
+                        {" "}
+                        {overall !== null ? `${Math.round(overall)} / 100` : "Unrated"}
+                        {subcontractor.preferred_vendor ? " · Preferred" : ""}
+                      </div>
+                      <div style={{ fontSize: "0.75rem", color: "#6b7280", marginTop: "0.25rem" }}>
+                        Compliance: {compliance.current} current · {compliance.warning}
+                        {" "}
+                        warning · {compliance.critical} needs action
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                      <span style={{ fontSize: "0.75rem", color: "#6b7280" }}>
+                        Score {Math.round(score)}
+                      </span>
+                      <button
+                        type="button"
+                        className={`btn btn-small ${isSelected ? "btn-secondary" : "btn-primary"}`}
+                        onClick={() =>
+                          setFormData((prev) => ({
+                            ...prev,
+                            assigned_to: subcontractor.id
+                              ? subcontractor.id.toString()
+                              : "",
+                          }))
+                        }
+                        disabled={!subcontractor.id}
+                      >
+                        {isSelected ? "Selected" : "Assign"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </EditModal>
 
