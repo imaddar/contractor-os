@@ -12,7 +12,12 @@ interface DashboardStats {
   upcomingDeadlines: number;
 }
 
-const Home: React.FC = () => {
+interface HomeProps {
+  theme: "dark" | "light";
+  onToggleTheme: () => void;
+}
+
+const Home: React.FC<HomeProps> = ({ theme, onToggleTheme }) => {
   const navigate = useNavigate();
   const [stats, setStats] = useState<DashboardStats>({
     activeProjects: 0,
@@ -90,10 +95,29 @@ const Home: React.FC = () => {
   return (
     <div className="page-content">
       <div className="dashboard-header">
-        <h1>Dashboard</h1>
-        <p className="dashboard-subtitle">
-          Welcome to ContractorOS - Your construction management hub
-        </p>
+        <div className="dashboard-heading">
+          <h1>Dashboard</h1>
+          <p className="dashboard-subtitle">
+            Welcome to ContractorOS - Your construction management hub
+          </p>
+        </div>
+        <div className="header-controls">
+          <button
+            type="button"
+            className="theme-toggle"
+            onClick={onToggleTheme}
+            aria-pressed={theme === "light"}
+            aria-label={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
+            title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
+          >
+            <span className="theme-toggle-icon">
+              <Icon name={theme === "light" ? "moon" : "sun"} size={18} />
+            </span>
+            <span className="theme-toggle-label">
+              {theme === "light" ? "Dark mode" : "Light mode"}
+            </span>
+          </button>
+        </div>
       </div>
 
       {error && <div className="error-message">{error}</div>}

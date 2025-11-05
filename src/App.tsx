@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   BrowserRouter as Router,
   Routes,
@@ -13,6 +14,8 @@ import Subcontractors from "./pages/Subcontractors";
 import ConstructIQ from "./pages/ConstructIQ";
 import { Icon, type IconName } from "./components/Icon";
 import "./App.css";
+
+type Theme = "dark" | "light";
 
 function Navigation() {
   const location = useLocation();
@@ -51,6 +54,38 @@ function Navigation() {
 }
 
 function App() {
+  const [theme, setTheme] = useState<Theme>(() => {
+    if (typeof window === "undefined") {
+      return "dark";
+    }
+
+    const stored = window.localStorage.getItem("contractor-os-theme");
+    if (stored === "light" || stored === "dark") {
+      return stored;
+    }
+
+    const prefersLight = window.matchMedia?.("(prefers-color-scheme: light)");
+    if (prefersLight?.matches) {
+      return "light";
+    }
+
+    return "dark";
+  });
+
+  useEffect(() => {
+    if (typeof document === "undefined" || typeof window === "undefined") {
+      return;
+    }
+
+    document.body.classList.remove("light-theme", "dark-theme");
+    document.body.classList.add(theme === "light" ? "light-theme" : "dark-theme");
+    window.localStorage.setItem("contractor-os-theme", theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme((current) => (current === "light" ? "dark" : "light"));
+  };
+
   return (
     <Router>
       <div className="app">
@@ -58,7 +93,10 @@ function App() {
         <div className="app-body">
           <main className="main-content">
             <Routes>
-              <Route path="/" element={<Home />} />
+              <Route
+                path="/"
+                element={<Home onToggleTheme={toggleTheme} theme={theme} />}
+              />
               <Route path="/projects" element={<Projects />} />
               <Route path="/schedule" element={<Schedule />} />
               <Route path="/budgets" element={<Budgets />} />
