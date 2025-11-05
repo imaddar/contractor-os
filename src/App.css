@@ -563,10 +563,12 @@ body.light-theme .quick-action-compact-btn:hover {
 .btn-primary {
     background: var(--accent);
     border-color: rgba(75, 142, 246, 0.65);
+    color: #ffffff;
 }
 
 .btn-primary:hover {
     background: rgba(75, 142, 246, 0.9);
+    color: #ffffff;
 }
 
 .btn-secondary {
@@ -737,8 +739,10 @@ body.light-theme .quick-action-compact-btn:hover {
     padding: 0.85rem 1.4rem;
     font-size: 0.95rem;
     justify-content: center;
-    border: 1px solid rgba(255, 255, 255, 0.25);
-    color: rgba(255, 255, 255, 0.82);
+    border: 1px solid rgba(24, 34, 48, 0.28);
+    background: #ffffff;
+    color: #182230;
+    box-shadow: 0 10px 26px rgba(15, 23, 42, 0.22);
 }
 
 .action-button-row .btn[disabled] {
@@ -747,8 +751,20 @@ body.light-theme .quick-action-compact-btn:hover {
 }
 
 .action-button-row .btn:hover:not([disabled]) {
-    border-color: rgba(255, 255, 255, 0.4);
-    color: rgba(255, 255, 255, 0.95);
+    border-color: rgba(24, 34, 48, 0.36);
+    background: #f3f6ff;
+    color: #0f172a;
+}
+
+body.light-theme .action-button-row .btn {
+    border-color: rgba(24, 34, 48, 0.18);
+    box-shadow: 0 8px 22px rgba(15, 23, 42, 0.12);
+}
+
+body.light-theme .action-button-row .btn:hover:not([disabled]) {
+    border-color: rgba(24, 34, 48, 0.28);
+    background: #f1f4ff;
+    color: #111a24;
 }
 
 .documents-section,
