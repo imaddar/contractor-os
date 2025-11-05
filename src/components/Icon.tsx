@@ -20,7 +20,9 @@ export type IconName =
   | 'arrow-right'
   | 'clock'
   | 'tasks'
-  | 'info';
+  | 'info'
+  | 'sun'
+  | 'moon';
 
 type IconProps = React.SVGProps<SVGSVGElement>;
 
@@ -177,6 +179,24 @@ const icons: Record<IconName, (props: IconProps) => React.JSX.Element> = {
       <circle cx="12" cy="12" r="8" />
       <path d="M12 11v5" />
       <circle cx="12" cy="8" r=".5" fill="currentColor" stroke="none" />
+    </svg>
+  ),
+  sun: (props) => (
+    <svg viewBox="0 0 24 24" {...baseProps} {...props}>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 3v2" />
+      <path d="M12 19v2" />
+      <path d="M5 12H3" />
+      <path d="M21 12h-2" />
+      <path d="m6.75 6.75-1.5-1.5" />
+      <path d="m18.75 18.75-1.5-1.5" />
+      <path d="m6.75 17.25-1.5 1.5" />
+      <path d="m18.75 5.25-1.5 1.5" />
+    </svg>
+  ),
+  moon: (props) => (
+    <svg viewBox="0 0 24 24" {...baseProps} {...props}>
+      <path d="M20 15.5A8 8 0 0 1 11.5 4 6.5 6.5 0 1 0 20 15.5z" />
     </svg>
   )
 };
