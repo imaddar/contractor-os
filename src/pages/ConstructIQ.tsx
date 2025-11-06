@@ -8,6 +8,10 @@ import { projectsApi, type Project } from "../api/projects";
 import type { Schedule } from "../api/schedules";
 import DeleteModal from "../components/DeleteModal";
 import { Icon } from "../components/Icon";
+import {
+  useGenerationStatus,
+  type ProgressStepState,
+} from "../context/GenerationStatusContext";
 
 // Helper function to generate UUID v4
 function generateUUID(): string {
@@ -27,19 +31,6 @@ function getOrCreateThreadId(): string {
   const newId = generateUUID();
   localStorage.setItem("constructiq_thread_id", newId);
   return newId;
-}
-
-type ProgressStatus = "pending" | "in-progress" | "completed" | "error";
-
-interface ProgressStepState {
-  id: string;
-  label: string;
-  status: ProgressStatus;
-}
-
-interface ThinkingLine {
-  id: string;
-  text: string;
 }
 
 function ConstructIQ() {
@@ -65,16 +56,24 @@ function ConstructIQ() {
   const [shouldGenerateProject, setShouldGenerateProject] = useState(true);
   const [shouldGenerateTasks, setShouldGenerateTasks] = useState(true);
   const [generationMaxTasks, setGenerationMaxTasks] = useState(8);
-  const [progressModalOpen, setProgressModalOpen] = useState(false);
-  const [progressSteps, setProgressSteps] = useState<ProgressStepState[]>([]);
-  const [generationComplete, setGenerationComplete] = useState(false);
-  const [thinkingFeed, setThinkingFeed] = useState<ThinkingLine[]>([]);
+  const {
+    state: {
+      isVisible: progressModalOpen,
+      isComplete: generationComplete,
+      error: generationError,
+      success: generationSuccess,
+    },
+    openPanel: openProgressPanel,
+    setComplete: setProgressComplete,
+    setMinimized: setProgressMinimized,
+    setSteps: setProgressSteps,
+    updateStep: updateProgressStep,
+    setThinkingFeed,
+    setError: setGenerationError,
+    setSuccess: setGenerationSuccess,
+  } = useGenerationStatus();
   const thinkingTimeoutsRef = useRef<number[]>([]);
   const thinkingSequencesRef = useRef<number[]>([]);
-  const [generationError, setGenerationError] = useState<string | null>(null);
-  const [generationSuccess, setGenerationSuccess] = useState<string | null>(
-    null,
-  );
   const [latestGeneratedProject, setLatestGeneratedProject] =
     useState<GeneratedProjectDetails | null>(null);
   const [latestGeneratedProjectRecord, setLatestGeneratedProjectRecord] =
@@ -357,6 +356,20 @@ function ConstructIQ() {
     [clearThinkingTimers, enqueueThinking],
   );
 
+  useEffect(() => {
+    if (!progressModalOpen) {
+      clearThinkingTimers();
+      setThinkingFeed([]);
+    }
+  }, [progressModalOpen, clearThinkingTimers, setThinkingFeed]);
+
+  useEffect(() => {
+    return () => {
+      clearThinkingTimers();
+      setThinkingFeed([]);
+    };
+  }, [clearThinkingTimers, setThinkingFeed]);
+
   const extractThinkingSnippets = (text: string) => {
     if (!text) return [];
     const normalized = text.replace(/\s+/g, " ").trim();
@@ -375,17 +388,6 @@ function ConstructIQ() {
     return fallback.slice(0, 4);
   };
 
-  const updateProgressStep = useCallback(
-    (stepId: string, status: ProgressStatus) => {
-      setProgressSteps((previous) =>
-        previous.map((step) =>
-          step.id === stepId ? { ...step, status } : step,
-        ),
-      );
-    },
-    [],
-  );
-
   const addGeneratedProjectDoc = useCallback((filename: string) => {
     if (!filename) return;
     setGeneratedProjectDocs((previous) => {
@@ -403,7 +405,7 @@ function ConstructIQ() {
     setGenerationError(null);
     setGenerationSuccess(null);
     setLastGenerationDocument(null);
-  }, []);
+  }, [setGenerationError, setGenerationSuccess]);
 
   const loadConversation = async (conversationId: string) => {
     setThreadId(conversationId);
@@ -593,15 +595,6 @@ function ConstructIQ() {
     setGenerationError(null);
   };
 
-  const closeProgressModal = () => {
-    if (!generationComplete) return;
-    setProgressModalOpen(false);
-    clearThinkingTimers();
-    setThinkingFeed([]);
-    thinkingTimeoutsRef.current.forEach((timerId) => window.clearTimeout(timerId));
-    thinkingTimeoutsRef.current = [];
-  };
-
   const handleGenerationSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!selectedGenerationDocument) {
@@ -621,8 +614,9 @@ function ConstructIQ() {
 
     resetGenerationResults();
     setGenerationModalOpen(false);
-    setProgressModalOpen(true);
-    setGenerationComplete(false);
+    openProgressPanel();
+    setProgressMinimized(false);
+    setProgressComplete(false);
     setThinkingFeed([]);
     clearThinkingTimers();
     setProgressSteps(() => {
@@ -754,7 +748,7 @@ function ConstructIQ() {
         setLatestGeneratedTasks(taskResults);
       }
 
-      setGenerationComplete(true);
+      setProgressComplete(true);
       const docLabel = selectedGenerationDocument;
       setLastGenerationDocument(docLabel);
       const projectCount = shouldGenerateProject ? 1 : 0;
@@ -777,7 +771,7 @@ function ConstructIQ() {
       );
     } catch (err) {
       console.error("Generation error:", err);
-      setGenerationComplete(true);
+      setProgressComplete(true);
       const message =
         err instanceof Error ? err.message : "Failed to complete generation.";
       setGenerationError(message);
@@ -1793,100 +1787,6 @@ function ConstructIQ() {
           </div>
         </div>
       )}
-
-      {progressModalOpen && (
-        <div
-          className={`generation-status-container ${
-            generationComplete ? "is-complete" : ""
-          }`}
-          role="status"
-          aria-live="polite"
-        >
-          <div className="generation-status-panel">
-            <div className="generation-status-header">
-              <div className="generation-status-title">
-                <span className="heading-icon">
-                  <Icon name="ai" size={18} />
-                </span>
-                <div>
-                  <h3>ConstructIQ is working</h3>
-                  <p className="generation-status-subtitle">
-                    {generationComplete
-                      ? "Generation finished"
-                      : "Tasks are running in the background"}
-                  </p>
-                </div>
-              </div>
-              <div className="generation-status-controls">
-                <span
-                  className={`generation-indicator ${
-                    generationComplete ? "complete" : "active"
-                  }`}
-                  aria-hidden="true"
-                />
-                <button
-                  onClick={closeProgressModal}
-                  className="btn btn-icon"
-                  aria-label="Close progress"
-                  disabled={!generationComplete}
-                  title={
-                    generationComplete
-                      ? "Dismiss status"
-                      : "Generation must finish before closing"
-                  }
-                >
-                  <Icon name="close" size={16} />
-                </button>
-              </div>
-            </div>
-
-            <div className="generation-status-body">
-              <div className="progress-steps">
-                {progressSteps.map((step) => (
-                  <div
-                    key={step.id}
-                    className={`progress-step ${step.status}`}
-                  >
-                    <span className="step-indicator" />
-                    <span className="step-label">{step.label}</span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="thinking-feed">
-                {thinkingFeed.map((line) => (
-                  <div key={line.id} className="thinking-line">
-                    {line.text}
-                  </div>
-                ))}
-              </div>
-
-              {generationComplete && generationError && (
-                <div className="error-message generation-status-message">
-                  {generationError}
-                </div>
-              )}
-              {generationComplete && generationSuccess && (
-                <div className="success-message generation-status-message">
-                  {generationSuccess}
-                </div>
-              )}
-            </div>
-
-            <div className="generation-status-footer">
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={closeProgressModal}
-                disabled={!generationComplete}
-              >
-                {generationComplete ? "Dismiss" : "Working..."}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Document Viewer Modal */}
       {selectedDocument && (
         <div className="modal-overlay" onClick={closeDocument}>
