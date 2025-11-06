@@ -13,6 +13,8 @@ import Budgets from "./pages/Budgets";
 import Subcontractors from "./pages/Subcontractors";
 import ConstructIQ from "./pages/ConstructIQ";
 import { Icon, type IconName } from "./components/Icon";
+import GenerationStatusPanel from "./components/GenerationStatusPanel";
+import { GenerationStatusProvider } from "./context/GenerationStatusContext";
 import "./App.css";
 
 type Theme = "dark" | "light";
@@ -87,26 +89,29 @@ function App() {
   };
 
   return (
-    <Router>
-      <div className="app">
-        <Navigation />
-        <div className="app-body">
-          <main className="main-content">
-            <Routes>
-              <Route
-                path="/"
-                element={<Home onToggleTheme={toggleTheme} theme={theme} />}
-              />
-              <Route path="/projects" element={<Projects />} />
-              <Route path="/schedule" element={<Schedule />} />
-              <Route path="/budgets" element={<Budgets />} />
-              <Route path="/subcontractors" element={<Subcontractors />} />
-              <Route path="/constructiq" element={<ConstructIQ />} />
-            </Routes>
-          </main>
+    <GenerationStatusProvider>
+      <Router>
+        <div className="app">
+          <Navigation />
+          <div className="app-body">
+            <main className="main-content">
+              <Routes>
+                <Route
+                  path="/"
+                  element={<Home onToggleTheme={toggleTheme} theme={theme} />}
+                />
+                <Route path="/projects" element={<Projects />} />
+                <Route path="/schedule" element={<Schedule />} />
+                <Route path="/budgets" element={<Budgets />} />
+                <Route path="/subcontractors" element={<Subcontractors />} />
+                <Route path="/constructiq" element={<ConstructIQ />} />
+              </Routes>
+            </main>
+          </div>
+          <GenerationStatusPanel />
         </div>
-      </div>
-    </Router>
+      </Router>
+    </GenerationStatusProvider>
   );
 }
 
