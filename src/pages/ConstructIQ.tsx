@@ -12,6 +12,12 @@ import {
   useGenerationStatus,
   type ProgressStepState,
 } from "../context/GenerationStatusContext";
+import {
+  addOrUpdateGeneratedProjectRecord,
+  parseStoredGeneratedProjects,
+  pruneGeneratedProjectRecords,
+  type GeneratedProjectRecord,
+} from "../utils/generatedProjects";
 
 // Helper function to generate UUID v4
 function generateUUID(): string {
@@ -47,6 +53,7 @@ function ConstructIQ() {
   );
   const [isDeleting, setIsDeleting] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [generationModalOpen, setGenerationModalOpen] = useState(false);
   const [selectedGenerationDocument, setSelectedGenerationDocument] =
     useState("");
@@ -86,9 +93,9 @@ function ConstructIQ() {
       document: string;
     }>
   >([]);
-  const [generatedProjectDocs, setGeneratedProjectDocs] = useState<string[]>(
-    [],
-  );
+  const [generatedProjects, setGeneratedProjects] = useState<
+    GeneratedProjectRecord[]
+  >([]);
   const [lastGenerationDocument, setLastGenerationDocument] = useState<
     string | null
   >(null);
@@ -106,6 +113,45 @@ function ConstructIQ() {
     string | null
   >(null);
   const [taskPreview, setTaskPreview] = useState<Schedule[]>([]);
+
+  const isDocumentGenerated = useCallback(
+    (filename?: string | null) => {
+      if (!filename) {
+        return false;
+      }
+      const trimmed = filename.trim();
+      if (!trimmed) {
+        return false;
+      }
+      return generatedProjects.some((record) => record.filename === trimmed);
+    },
+    [generatedProjects],
+  );
+
+  const recordGeneratedProject = useCallback(
+    (filename: string, projectId?: number | null, projectName?: string | null) => {
+      setGeneratedProjects((previous) =>
+        addOrUpdateGeneratedProjectRecord(previous, filename, projectId, projectName),
+      );
+    },
+    [],
+  );
+
+  const removeGeneratedProjectRecord = useCallback(
+    (filename?: string | null) => {
+      if (!filename) {
+        return;
+      }
+      const trimmed = filename.trim();
+      if (!trimmed) {
+        return;
+      }
+      setGeneratedProjects((previous) =>
+        previous.filter((record) => record.filename !== trimmed),
+      );
+    },
+    [],
+  );
 
   // Chat-related state
   const [chatMessages, setChatMessages] = useState<
@@ -141,16 +187,13 @@ function ConstructIQ() {
   useEffect(() => {
     try {
       const storedDocs = localStorage.getItem("constructiq_generated_projects");
-      if (storedDocs) {
-        const parsed = JSON.parse(storedDocs);
-        if (Array.isArray(parsed)) {
-          const sanitized = parsed.filter(
-            (item): item is string => typeof item === "string" && item.length > 0,
-          );
-          if (sanitized.length > 0) {
-            setGeneratedProjectDocs(sanitized);
-          }
-        }
+      if (!storedDocs) {
+        return;
+      }
+      const parsed = JSON.parse(storedDocs);
+      const restored = parseStoredGeneratedProjects(parsed);
+      if (restored.length > 0) {
+        setGeneratedProjects(restored);
       }
     } catch (storageError) {
       console.warn("Failed to restore generated project docs:", storageError);
@@ -185,20 +228,26 @@ function ConstructIQ() {
   }, [projects]);
 
   useEffect(() => {
-    localStorage.setItem(
-      "constructiq_generated_projects",
-      JSON.stringify(generatedProjectDocs),
+    if (!projectsLoaded) {
+      return;
+    }
+    setGeneratedProjects((previous) =>
+      pruneGeneratedProjectRecords(previous, projects),
     );
-  }, [generatedProjectDocs]);
+  }, [projects, projectsLoaded]);
 
   useEffect(() => {
-    if (
-      selectedGenerationDocument &&
-      generatedProjectDocs.includes(selectedGenerationDocument)
-    ) {
+    localStorage.setItem(
+      "constructiq_generated_projects",
+      JSON.stringify(generatedProjects),
+    );
+  }, [generatedProjects]);
+
+  useEffect(() => {
+    if (selectedGenerationDocument && isDocumentGenerated(selectedGenerationDocument)) {
       setShouldGenerateProject(false);
     }
-  }, [selectedGenerationDocument, generatedProjectDocs]);
+  }, [selectedGenerationDocument, isDocumentGenerated]);
 
   useEffect(() => {
     return () => {
@@ -315,6 +364,8 @@ function ConstructIQ() {
       setProjects(projectList);
     } catch (err) {
       console.error("Error fetching projects:", err);
+    } finally {
+      setProjectsLoaded(true);
     }
   };
 
@@ -387,16 +438,6 @@ function ConstructIQ() {
       .filter((segment) => segment.length > 3);
     return fallback.slice(0, 4);
   };
-
-  const addGeneratedProjectDoc = useCallback((filename: string) => {
-    if (!filename) return;
-    setGeneratedProjectDocs((previous) => {
-      if (previous.includes(filename)) {
-        return previous;
-      }
-      return [...previous, filename];
-    });
-  }, []);
 
   const resetGenerationResults = useCallback(() => {
     setLatestGeneratedProject(null);
@@ -477,9 +518,7 @@ function ConstructIQ() {
       setUploadedFiles((prev) =>
         prev.filter((d) => d.filename !== deletingDocument.filename),
       );
-      setGeneratedProjectDocs((prev) =>
-        prev.filter((name) => name !== deletingDocument.filename),
-      );
+      removeGeneratedProjectRecord(deletingDocument.filename);
       if (selectedDocument?.filename === deletingDocument.filename) {
         setSelectedDocument(null);
       }
@@ -540,16 +579,12 @@ function ConstructIQ() {
       ? selectedGenerationDocument
       : uploadedFiles.find((doc) => doc.filename && doc.filename !== "Unknown")
           ?.filename || "";
-    if (
-      mode === "project" &&
-      defaultDocument &&
-      generatedProjectDocs.includes(defaultDocument)
-    ) {
+    if (mode === "project" && defaultDocument && isDocumentGenerated(defaultDocument)) {
       const nextDoc = uploadedFiles.find(
         (doc) =>
           doc.filename &&
           doc.filename !== "Unknown" &&
-          !generatedProjectDocs.includes(doc.filename),
+          !isDocumentGenerated(doc.filename),
       );
       if (nextDoc?.filename) {
         defaultDocument = nextDoc.filename;
@@ -571,8 +606,7 @@ function ConstructIQ() {
     });
 
     const docAlreadyGenerated =
-      defaultDocument !== "" &&
-      generatedProjectDocs.includes(defaultDocument);
+      defaultDocument !== "" && isDocumentGenerated(defaultDocument);
     if (mode === "project") {
       setShouldGenerateProject(!docAlreadyGenerated);
       setShouldGenerateTasks(false);
@@ -649,6 +683,8 @@ function ConstructIQ() {
       return baseSteps;
     });
 
+    let canonicalDocumentLabel = selectedGenerationDocument;
+
     try {
       updateProgressStep("context", "completed");
 
@@ -659,9 +695,23 @@ function ConstructIQ() {
           true,
         );
 
+        canonicalDocumentLabel =
+          projectResponse.source_filename || canonicalDocumentLabel;
         setLatestGeneratedProject(projectResponse.project);
+        let createdProjectRecord: Project | null = null;
         if (projectResponse.created_project) {
+          createdProjectRecord = projectResponse.created_project;
           setLatestGeneratedProjectRecord(projectResponse.created_project);
+          const responseProject = projectResponse.created_project;
+          setProjects((previous) => {
+            if (
+              responseProject.id &&
+              previous.some((project) => project.id === responseProject.id)
+            ) {
+              return previous;
+            }
+            return [...previous, responseProject];
+          });
         } else if (!projectResponse.persisted) {
           const fallbackPayload: Omit<Project, "id"> = {
             name: projectResponse.project.name,
@@ -675,11 +725,25 @@ function ConstructIQ() {
           try {
             const created = await projectsApi.create(fallbackPayload);
             setLatestGeneratedProjectRecord(created);
+            createdProjectRecord = created;
+            setProjects((previous) => {
+              if (created.id && previous.some((project) => project.id === created.id)) {
+                return previous;
+              }
+              return [...previous, created];
+            });
           } catch (creationError) {
             console.error("Fallback project creation failed:", creationError);
           }
+        } else {
+          setLatestGeneratedProjectRecord(null);
         }
-        addGeneratedProjectDoc(selectedGenerationDocument);
+
+        recordGeneratedProject(
+          canonicalDocumentLabel,
+          createdProjectRecord?.id ?? null,
+          createdProjectRecord?.name ?? projectResponse.project.name,
+        );
 
         const snippetSources = [
           ...(projectResponse.raw_response
@@ -720,11 +784,15 @@ function ConstructIQ() {
             { maxTasks: generationMaxTasks, persist: true },
           );
 
+          const taskSource =
+            taskResponse.source_filename || canonicalDocumentLabel;
+          canonicalDocumentLabel = taskSource;
+
           taskResults.push({
             projectId,
             projectName,
             tasks: taskResponse.tasks,
-            document: selectedGenerationDocument,
+            document: taskSource,
           });
 
           const snippets = [
@@ -749,7 +817,7 @@ function ConstructIQ() {
       }
 
       setProgressComplete(true);
-      const docLabel = selectedGenerationDocument;
+      const docLabel = canonicalDocumentLabel || selectedGenerationDocument;
       setLastGenerationDocument(docLabel);
       const projectCount = shouldGenerateProject ? 1 : 0;
       const taskProjectCount = shouldGenerateTasks
@@ -1399,7 +1467,7 @@ function ConstructIQ() {
                       {doc.filename}
                     </h4>
                     <div className="document-meta-tags">
-                      {generatedProjectDocs.includes(doc.filename) && (
+                      {isDocumentGenerated(doc.filename) && (
                         <span className="status-tag status-complete">
                           Project generated
                         </span>
@@ -1686,11 +1754,11 @@ function ConstructIQ() {
                             type="checkbox"
                             checked={shouldGenerateProject}
                             onChange={(e) => setShouldGenerateProject(e.target.checked)}
-                            disabled={generatedProjectDocs.includes(selectedGenerationDocument)}
+                            disabled={isDocumentGenerated(selectedGenerationDocument)}
                           />
                           <span>Generate project brief</span>
                         </label>
-                        {generatedProjectDocs.includes(selectedGenerationDocument) && (
+                        {isDocumentGenerated(selectedGenerationDocument) && (
                           <span className="hint-text">Project already created for this document</span>
                         )}
                       </div>
