@@ -2,8 +2,9 @@ from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Body
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 import os
+import asyncio
 from dotenv import load_dotenv
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 from pydantic import BaseModel, validator
 import uvicorn
 from langchain_community.document_loaders import PyPDFLoader
@@ -18,7 +19,7 @@ from datetime import datetime
 from uuid import UUID
 from langchain_ollama import ChatOllama
 from langchain_core.tools import tool
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
 from langgraph.graph import MessagesState, StateGraph, END
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.memory import MemorySaver
@@ -102,6 +103,21 @@ try:
 except Exception as e:
     print(f"Warning: Could not initialize chat LLM: {e}")
     chat_llm = None
+
+
+async def invoke_chat_model(messages: Sequence[BaseMessage]):
+    """Invoke the chat LLM without blocking the event loop."""
+
+    if not chat_llm:
+        raise RuntimeError("Chat LLM is not initialized")
+
+    if hasattr(chat_llm, "ainvoke"):
+        try:
+            return await chat_llm.ainvoke(messages)
+        except (NotImplementedError, AttributeError):
+            pass
+
+    return await asyncio.to_thread(chat_llm.invoke, messages)
 
 # Initialize memory for conversation persistence
 memory = MemorySaver()
@@ -1081,7 +1097,7 @@ async def generate_project_from_document(
     )
 
     try:
-        llm_response = chat_llm.invoke(
+        llm_response = await invoke_chat_model(
             [SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)]
         )
         raw_content = getattr(llm_response, "content", str(llm_response))
@@ -1249,7 +1265,7 @@ async def generate_tasks_from_document(
     ]
 
     try:
-        llm_response = chat_llm.invoke(
+        llm_response = await invoke_chat_model(
             [SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)]
         )
         raw_content = getattr(llm_response, "content", str(llm_response))
