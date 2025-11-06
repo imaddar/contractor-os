@@ -1795,28 +1795,52 @@ function ConstructIQ() {
       )}
 
       {progressModalOpen && (
-        <div className="modal-overlay" onClick={() => closeProgressModal()}>
-          <div
-            className="modal-content progress-modal"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="modal-header">
-              <h3>
+        <div
+          className={`generation-status-container ${
+            generationComplete ? "is-complete" : ""
+          }`}
+          role="status"
+          aria-live="polite"
+        >
+          <div className="generation-status-panel">
+            <div className="generation-status-header">
+              <div className="generation-status-title">
                 <span className="heading-icon">
                   <Icon name="ai" size={18} />
                 </span>
-                ConstructIQ is working
-              </h3>
-              <button
-                onClick={closeProgressModal}
-                className="modal-close"
-                aria-label="Close progress"
-                disabled={!generationComplete}
-              >
-                <Icon name="close" size={18} />
-              </button>
+                <div>
+                  <h3>ConstructIQ is working</h3>
+                  <p className="generation-status-subtitle">
+                    {generationComplete
+                      ? "Generation finished"
+                      : "Tasks are running in the background"}
+                  </p>
+                </div>
+              </div>
+              <div className="generation-status-controls">
+                <span
+                  className={`generation-indicator ${
+                    generationComplete ? "complete" : "active"
+                  }`}
+                  aria-hidden="true"
+                />
+                <button
+                  onClick={closeProgressModal}
+                  className="btn btn-icon"
+                  aria-label="Close progress"
+                  disabled={!generationComplete}
+                  title={
+                    generationComplete
+                      ? "Dismiss status"
+                      : "Generation must finish before closing"
+                  }
+                >
+                  <Icon name="close" size={16} />
+                </button>
+              </div>
             </div>
-            <div className="modal-body">
+
+            <div className="generation-status-body">
               <div className="progress-steps">
                 {progressSteps.map((step) => (
                   <div
@@ -1838,24 +1862,25 @@ function ConstructIQ() {
               </div>
 
               {generationComplete && generationError && (
-                <div className="error-message" style={{ marginTop: "1rem" }}>
+                <div className="error-message generation-status-message">
                   {generationError}
                 </div>
               )}
               {generationComplete && generationSuccess && (
-                <div className="success-message" style={{ marginTop: "1rem" }}>
+                <div className="success-message generation-status-message">
                   {generationSuccess}
                 </div>
               )}
             </div>
-            <div className="modal-actions">
+
+            <div className="generation-status-footer">
               <button
                 type="button"
                 className="btn btn-primary"
                 onClick={closeProgressModal}
                 disabled={!generationComplete}
               >
-                {generationComplete ? "Close" : "Working..."}
+                {generationComplete ? "Dismiss" : "Working..."}
               </button>
             </div>
           </div>
