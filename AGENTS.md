@@ -1,5 +1,13 @@
 # Repository Guidelines
 
+# Development Process
+You will follow a test driven development framework. The workflow for new features
+should be organized as follows.
+- Develop a plan, with a step by step to-do list of each of the things that will be developed
+- from there, write tests that measure the accomplishment of this task
+- then, begin writing code, adjusting until the tests pass
+- repeat
+
 ## Project Structure & Module Organization
 - `src/` contains the React 19 + TypeScript SPA; `main.tsx` bootstraps Vite and `App.tsx` defines routing.
 - Feature views live in `src/pages/`, shared UI in `src/components/`, and API helpers in `src/api/`.
