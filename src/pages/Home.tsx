@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { dashboardApi } from "../api/dashboard";
-import { schedulesApi } from "../api/schedules";
+import { schedulesApi, type Schedule } from "../api/schedules";
+import { projectsApi, type Project } from "../api/projects";
+import { budgetsApi, type Budget } from "../api/budgets";
 import { Icon } from "../components/Icon";
 
 interface DashboardStats {
@@ -10,6 +12,12 @@ interface DashboardStats {
   totalBudget: number;
   activeSubcontractors: number;
   upcomingDeadlines: number;
+}
+
+interface ProjectWithHealth extends Project {
+  budgetSpent: number;
+  budgetTotal: number;
+  taskCount: number;
 }
 
 interface HomeProps {
@@ -26,6 +34,9 @@ const Home: React.FC<HomeProps> = ({ theme, onToggleTheme }) => {
     activeSubcontractors: 0,
     upcomingDeadlines: 0,
   });
+  
+  const [activeProjectsList, setActiveProjectsList] = useState<ProjectWithHealth[]>([]);
+  const [upcomingTasks, setUpcomingTasks] = useState<Schedule[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,37 +47,71 @@ const Home: React.FC<HomeProps> = ({ theme, onToggleTheme }) => {
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
-      // Use the optimized dashboard summary endpoint
-      const summary = await dashboardApi.getSummary();
+      
+      // Fetch all required data in parallel
+      const [summary, allProjects, allSchedules, allBudgets] = await Promise.all([
+        dashboardApi.getSummary(),
+        projectsApi.getAll(),
+        schedulesApi.getAll(),
+        budgetsApi.getAll()
+      ]);
 
-      // Calculate pending tasks (pending + in_progress)
-      const pendingTasks = summary.tasks.pending + summary.tasks.in_progress;
+      // 1. Process Project Health & Budget
+      const projectsMap = new Map<number, ProjectWithHealth>();
+      
+      allProjects.forEach(p => {
+        if (p.status === 'active' && p.id) {
+            projectsMap.set(p.id, {
+                ...p,
+                budgetSpent: 0,
+                budgetTotal: 0,
+                taskCount: 0
+            });
+        }
+      });
 
-      // Fetch schedules only to calculate upcoming deadlines
-      const schedules = await schedulesApi.getAll();
+      // Sum up budgets per project
+      allBudgets.forEach(b => {
+        const project = projectsMap.get(b.project_id);
+        if (project) {
+            project.budgetTotal += b.budgeted_amount;
+            project.budgetSpent += b.actual_amount;
+        }
+      });
 
-      // Calculate upcoming deadlines (tasks ending within next 7 days)
-      const nextWeek = new Date();
+      // Count pending tasks per project
+      allSchedules.forEach(s => {
+          const project = projectsMap.get(s.project_id);
+          if (project && (s.status === 'pending' || s.status === 'in_progress')) {
+              project.taskCount += 1;
+          }
+      });
+
+      setActiveProjectsList(Array.from(projectsMap.values()));
+
+      // 2. Process Upcoming Deadlines (Next 7 Days)
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const nextWeek = new Date(today);
       nextWeek.setDate(nextWeek.getDate() + 7);
-      const upcomingDeadlines = schedules.filter((schedule) => {
-        if (!schedule.end_date) return false;
-        const endDate = new Date(schedule.end_date);
-        const today = new Date();
-        return (
-          endDate >= today &&
-          endDate <= nextWeek &&
-          schedule.status !== "completed" &&
-          schedule.status !== "proposed"
-        );
-      }).length;
 
+      const upcoming = allSchedules.filter(task => {
+        if (!task.end_date || task.status === 'completed' || task.status === 'proposed') return false;
+        const endDate = new Date(task.end_date);
+        return endDate >= today && endDate <= nextWeek;
+      }).sort((a, b) => new Date(a.end_date!).getTime() - new Date(b.end_date!).getTime());
+
+      setUpcomingTasks(upcoming);
+
+      // 3. Set Stats
       setStats({
         activeProjects: summary.projects.active,
-        pendingTasks,
+        pendingTasks: summary.tasks.pending + summary.tasks.in_progress,
         totalBudget: summary.budgets.total_budgeted,
         activeSubcontractors: summary.subcontractors.total,
-        upcomingDeadlines,
+        upcomingDeadlines: upcoming.length,
       });
+
     } catch (err) {
       setError("Failed to fetch dashboard data");
       console.error("Error fetching dashboard data:", err);
@@ -98,7 +143,7 @@ const Home: React.FC<HomeProps> = ({ theme, onToggleTheme }) => {
         <div className="dashboard-heading">
           <h1>Dashboard</h1>
           <p className="dashboard-subtitle">
-            Welcome to ContractorOS - Your construction management hub
+            Overview of your active construction projects and tasks
           </p>
         </div>
         <div className="header-controls">
@@ -106,8 +151,6 @@ const Home: React.FC<HomeProps> = ({ theme, onToggleTheme }) => {
             type="button"
             className="theme-toggle"
             onClick={onToggleTheme}
-            aria-pressed={theme === "light"}
-            aria-label={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
             title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
           >
             <span className="theme-toggle-icon">
@@ -123,43 +166,22 @@ const Home: React.FC<HomeProps> = ({ theme, onToggleTheme }) => {
       {error && <div className="error-message">{error}</div>}
 
       <div className="dashboard-quick-actions-compact">
-        <h3 className="quick-actions-label">Quick Actions</h3>
         <div className="quick-actions-compact-grid">
-          <button
-            className="quick-action-compact-btn"
-            onClick={() => navigate("/projects?action=new")}
-          >
-            <span className="action-icon">
-              <Icon name="plus" size={18} />
-            </span>
+          <button className="quick-action-compact-btn" onClick={() => navigate("/projects?action=new")}>
+            <span className="action-icon"><Icon name="plus" size={18} /></span>
             <span className="action-text">New Project</span>
           </button>
-          <button
-            className="quick-action-compact-btn"
-            onClick={() => navigate("/schedule?action=new")}
-          >
-            <span className="action-icon">
-              <Icon name="calendar" size={18} />
-            </span>
-            <span className="action-text">Schedule Task</span>
+          <button className="quick-action-compact-btn" onClick={() => navigate("/schedule?action=new")}>
+            <span className="action-icon"><Icon name="calendar" size={18} /></span>
+            <span className="action-text">Add Task</span>
           </button>
-          <button
-            className="quick-action-compact-btn"
-            onClick={() => navigate("/budgets?action=new")}
-          >
-            <span className="action-icon">
-              <Icon name="budget" size={18} />
-            </span>
-            <span className="action-text">Manage Budget</span>
+          <button className="quick-action-compact-btn" onClick={() => navigate("/budgets?action=new")}>
+            <span className="action-icon"><Icon name="budget" size={18} /></span>
+            <span className="action-text">Add Budget</span>
           </button>
-          <button
-            className="quick-action-compact-btn"
-            onClick={() => navigate("/subcontractors?action=new")}
-          >
-            <span className="action-icon">
-              <Icon name="team" size={18} />
-            </span>
-            <span className="action-text">Add Subcontractor</span>
+          <button className="quick-action-compact-btn" onClick={() => navigate("/constructiq")}>
+            <span className="action-icon"><Icon name="ai" size={18} /></span>
+            <span className="action-text">Ask AI</span>
           </button>
         </div>
       </div>
@@ -172,7 +194,6 @@ const Home: React.FC<HomeProps> = ({ theme, onToggleTheme }) => {
           <div className="card-content">
             <h3>Active Projects</h3>
             <div className="card-number">{stats.activeProjects}</div>
-            <p className="card-description">Currently in progress</p>
           </div>
         </div>
 
@@ -183,7 +204,6 @@ const Home: React.FC<HomeProps> = ({ theme, onToggleTheme }) => {
           <div className="card-content">
             <h3>Pending Tasks</h3>
             <div className="card-number">{stats.pendingTasks}</div>
-            <p className="card-description">Tasks to be completed</p>
           </div>
         </div>
 
@@ -193,21 +213,7 @@ const Home: React.FC<HomeProps> = ({ theme, onToggleTheme }) => {
           </div>
           <div className="card-content">
             <h3>Total Budget</h3>
-            <div className="card-number">
-              {formatCurrency(stats.totalBudget)}
-            </div>
-            <p className="card-description">Across all projects</p>
-          </div>
-        </div>
-
-        <div className="dashboard-card">
-          <div className="card-icon">
-            <Icon name="team" size={22} />
-          </div>
-          <div className="card-content">
-            <h3>Subcontractors</h3>
-            <div className="card-number">{stats.activeSubcontractors}</div>
-            <p className="card-description">Available for work</p>
+            <div className="card-number">{formatCurrency(stats.totalBudget)}</div>
           </div>
         </div>
 
@@ -216,47 +222,80 @@ const Home: React.FC<HomeProps> = ({ theme, onToggleTheme }) => {
             <Icon name="clock" size={22} />
           </div>
           <div className="card-content">
-            <h3>Upcoming Deadlines</h3>
+            <h3>Due Soon</h3>
             <div className="card-number">{stats.upcomingDeadlines}</div>
-            <p className="card-description">Due within 7 days</p>
           </div>
         </div>
       </div>
 
-      <div className="dashboard-recent">
-        <h2>Getting Started</h2>
-        <div className="getting-started-tips">
-          <div className="tip-card">
-            <h4>
-              <span className="tip-icon">
-                <Icon name="progress" size={18} />
-              </span>
-              Track Your Progress
-            </h4>
-            <p>
-              Monitor project status, budgets, and deadlines all in one place.
-            </p>
+      <div className="dashboard-content-wrapper">
+        <div className="section-card">
+          <div className="section-header">
+            <h3>Active Projects Health</h3>
+            <button className="btn btn-small btn-secondary" onClick={() => navigate('/projects')}>View All</button>
           </div>
-          <div className="tip-card">
-            <h4>
-              <span className="tip-icon">
-                <Icon name="timeline" size={18} />
-              </span>
-              Stay Organized
-            </h4>
-            <p>
-              Use the calendar view to visualize your project timeline and task
-              dependencies.
-            </p>
+          <div className="recent-projects-list">
+            {activeProjectsList.length === 0 ? (
+                <div className="empty-state-small">No active projects</div>
+            ) : (
+                activeProjectsList.slice(0, 5).map(project => {
+                    const percentSpent = project.budgetTotal > 0 
+                        ? Math.min(100, (project.budgetSpent / project.budgetTotal) * 100) 
+                        : 0;
+                    
+                    return (
+                        <div key={project.id} className="project-item-card" onClick={() => navigate(`/projects`)}>
+                            <div className="project-item-header">
+                                <h4>{project.name}</h4>
+                                <span className="project-tasks-badge">{project.taskCount} tasks</span>
+                            </div>
+                            <div className="project-budget-bar">
+                                <div className="budget-labels">
+                                    <span>Budget Used</span>
+                                    <span>{Math.round(percentSpent)}%</span>
+                                </div>
+                                <div className="progress-track">
+                                    <div 
+                                        className={`progress-fill ${percentSpent > 100 ? 'danger' : percentSpent > 85 ? 'warning' : ''}`} 
+                                        style={{ width: `${percentSpent}%` }} 
+                                    />
+                                </div>
+                                <div className="budget-values">
+                                    <span>{formatCurrency(project.budgetSpent)}</span>
+                                    <span>of {formatCurrency(project.budgetTotal)}</span>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })
+            )}
           </div>
-          <div className="tip-card">
-            <h4>
-              <span className="tip-icon">
-                <Icon name="handshake" size={18} />
-              </span>
-              Manage Your Team
-            </h4>
-            <p>Keep track of subcontractors and assign tasks efficiently.</p>
+        </div>
+
+        <div className="section-card">
+          <div className="section-header">
+            <h3>Upcoming Deadlines</h3>
+            <button className="btn btn-small btn-secondary" onClick={() => navigate('/schedule')}>View Schedule</button>
+          </div>
+          <div className="upcoming-tasks-list">
+            {upcomingTasks.length === 0 ? (
+                <div className="empty-state-small">No tasks due in next 7 days</div>
+            ) : (
+                upcomingTasks.map(task => {
+                    const isOverdue = new Date(task.end_date!) < new Date();
+                    return (
+                        <div key={task.id} className="task-item-card">
+                           <div className="task-icon">
+                               <Icon name={isOverdue ? 'warning' : 'clock'} size={16} className={isOverdue ? 'text-danger' : 'text-soft'} />
+                           </div>
+                           <div className="task-info">
+                               <span className="task-name">{task.task_name}</span>
+                               <span className="task-date">Due {new Date(task.end_date!).toLocaleDateString()}</span>
+                           </div>
+                        </div>
+                    );
+                })
+            )}
           </div>
         </div>
       </div>
