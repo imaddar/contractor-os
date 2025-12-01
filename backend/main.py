@@ -159,6 +159,72 @@ class Schedule(BaseModel):
     end_date: Optional[str] = None
     assigned_to: Optional[int] = None
     status: str = "pending"
+    predecessor_ids: List[int] = []
+    resource_capacities: Dict[str, float] = {}
+    progress_percent: float = 0.0
+
+    @validator("predecessor_ids", pre=True, always=True)
+    def _normalize_predecessors(cls, value):
+        if value is None or value == "":
+            return []
+        if isinstance(value, list):
+            normalized: List[int] = []
+            for item in value:
+                try:
+                    normalized.append(int(item))
+                except (TypeError, ValueError):
+                    continue
+            return normalized
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return []
+            try:
+                parsed = json.loads(stripped)
+                if isinstance(parsed, list):
+                    return cls._normalize_predecessors(parsed)
+            except json.JSONDecodeError:
+                pass
+        return []
+
+    @validator("resource_capacities", pre=True, always=True)
+    def _normalize_resource_capacities(cls, value):
+        if value in (None, "", {}):
+            return {}
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return {}
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                return {}
+            if not isinstance(parsed, dict):
+                return {}
+            value = parsed
+        if isinstance(value, dict):
+            normalized: Dict[str, float] = {}
+            for key, raw in value.items():
+                key_str = str(key)
+                try:
+                    numeric = float(raw)
+                except (TypeError, ValueError):
+                    continue
+                normalized[key_str] = numeric
+            return normalized
+        return {}
+
+    @validator("progress_percent", pre=True, always=True)
+    def _clamp_progress(cls, value):
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        if numeric < 0:
+            return 0.0
+        if numeric > 100:
+            return 100.0
+        return numeric
 
 
 class Budget(BaseModel):
