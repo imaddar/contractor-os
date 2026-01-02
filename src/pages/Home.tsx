@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { dashboardApi } from "../api/dashboard";
 import { schedulesApi, type Schedule } from "../api/schedules";
 import { projectsApi, type Project } from "../api/projects";
-import { budgetsApi, type Budget } from "../api/budgets";
+import { budgetsApi } from "../api/budgets";
 import { Icon } from "../components/Icon";
 
 interface DashboardStats {
