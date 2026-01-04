@@ -30,10 +30,12 @@ const Projects: React.FC = () => {
 
   useEffect(() => {
     // Check if we should open the modal from URL parameter
-    if (searchParams.get('action') === 'new') {
+    if (searchParams.get("action") === "new") {
       setShowEditModal(true);
-      // Clear the URL parameter
-      setSearchParams({});
+      // Remove only the action param while preserving other query params
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete("action");
+      setSearchParams(nextParams);
     }
   }, [searchParams, setSearchParams]);
 
