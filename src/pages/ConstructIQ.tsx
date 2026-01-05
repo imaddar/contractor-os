@@ -18,6 +18,12 @@ import {
   pruneGeneratedProjectRecords,
   type GeneratedProjectRecord,
 } from "../utils/generatedProjects";
+import {
+  deleteChatConversation,
+  fetchChatConversations,
+  fetchChatMessages,
+  sendChatMessage,
+} from "../api/chat";
 
 // Helper function to generate UUID v4
 function generateUUID(): string {
@@ -279,42 +285,26 @@ function ConstructIQ() {
     try {
       setIsLoadingHistory(true);
       const idToFetch = conversationId || threadId;
-      const response = await fetch(
-        `http://localhost:8000/chat/conversations/${idToFetch}/messages`,
-      );
+      const messages = await fetchChatMessages(idToFetch);
 
-      if (response.ok) {
-        const messages = await response.json();
-
-        if (messages && messages.length > 0) {
-          // Convert backend messages to frontend format
-          const formattedMessages = messages.map(
-            (msg: {
-              message_type: string;
-              content: string;
-              created_at?: string;
-            }) => ({
-              type: msg.message_type as "user" | "ai",
-              content: msg.content,
-              timestamp: msg.created_at || new Date().toISOString(),
-            }),
-          );
-          setChatMessages(formattedMessages);
-          console.log(
-            `Loaded ${formattedMessages.length} messages from history`,
-          );
-        } else {
-          // No history, show welcome message
-          setChatMessages([
-            {
-              type: "ai",
-              content:
-                "Hello! I'm ConstructIQ, your AI assistant for construction project management. I can help you analyze documents, plan projects, create schedules, and answer construction-related questions. What would you like to know?",
-              timestamp: new Date().toISOString(),
-            },
-          ]);
-        }
-      } else if (response.status === 404 || response.status === 500) {
+      if (messages && messages.length > 0) {
+        // Convert backend messages to frontend format
+        const formattedMessages = messages.map(
+          (msg: {
+            message_type: string;
+            content: string;
+            created_at?: string;
+          }) => ({
+            type: msg.message_type as "user" | "ai",
+            content: msg.content,
+            timestamp: msg.created_at || new Date().toISOString(),
+          }),
+        );
+        setChatMessages(formattedMessages);
+        console.log(
+          `Loaded ${formattedMessages.length} messages from history`,
+        );
+      } else {
         // No conversation found or error, start fresh
         setChatMessages([
           {
@@ -344,13 +334,9 @@ function ConstructIQ() {
   const fetchConversations = async () => {
     try {
       setIsLoadingConversations(true);
-      const response = await fetch("http://localhost:8000/chat/conversations");
-
-      if (response.ok) {
-        const data = await response.json();
-        setConversations(data);
-        console.log(`Loaded ${data.length} conversations`);
-      }
+      const data = await fetchChatConversations();
+      setConversations(data);
+      console.log(`Loaded ${data.length} conversations`);
     } catch (err) {
       console.error("Error loading conversations:", err);
     } finally {
@@ -879,22 +865,10 @@ function ConstructIQ() {
     setError(null);
 
     try {
-      const response = await fetch("http://localhost:8000/chat/message", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          message: userMessage.content,
-          thread_id: threadId,
-        }),
+      const data = await sendChatMessage({
+        message: userMessage.content,
+        thread_id: threadId,
       });
-
-      if (!response.ok) {
-        throw new Error("Failed to send message");
-      }
-
-      const data = await response.json();
 
       // Add AI responses to chat
       if (data.ai_responses && data.ai_responses.length > 0) {
@@ -934,12 +908,7 @@ function ConstructIQ() {
 
   const deleteConversation = async (conversationId: string) => {
     try {
-      await fetch(
-        `http://localhost:8000/chat/conversations/${conversationId}`,
-        {
-          method: "DELETE",
-        },
-      );
+      await deleteChatConversation(conversationId);
 
       // If we deleted the current conversation, create a new one
       if (conversationId === threadId) {
