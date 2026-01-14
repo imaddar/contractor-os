@@ -1,5 +1,7 @@
 import { createApiClient } from './client';
 
+export type ResourceCapacities = Record<string, number>;
+
 export interface Schedule {
   id?: number;
   project_id: number;
@@ -8,6 +10,9 @@ export interface Schedule {
   end_date?: string;
   assigned_to?: number;
   status: string;
+  predecessor_ids?: number[];
+  resource_capacities?: ResourceCapacities;
+  progress_percent?: number;
 }
 
 const baseApi = createApiClient<Schedule>('schedules');
